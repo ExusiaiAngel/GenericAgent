@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# ══════════════════════════════════════════════════════════════════════════════
+#  WSL / Linux ONLY — On Windows use ga.cmd or python -m ga_cli
+# ══════════════════════════════════════════════════════════════════════════════
+cd "$(dirname "$0")"
+[ -f env.sh ] && . ./env.sh >/dev/null 2>&1
+for PY in .venv/bin/python python3 python; do
+    command -v "$PY" >/dev/null 2>&1 && break
+done
+exec "$PY" -m ga_cli "$@"

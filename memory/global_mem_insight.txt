@@ -1,0 +1,24 @@
+# [Global Memory Insight]
+Read L2 or ls ../memory/ for L3 when needed
+Startup: personal_bootstrap_profile | launch_readiness_report | cold_start_task_queue | sandbox_policy | project_map | next_phase_goals | new_machine_setup_sop
+Supervision/Review: personal_supervision_sop | ★supervisor_sop[已审阅] | review_sop | verify_sop | code_review_principles
+L0(META-SOP): memory_management_sop
+L2: global_mem.txt (env facts)
+L3: launch_readiness_check_sop | web_research_sop | deep_research_sop | skill_search | ★test_sop[已审阅] | ui_detect.py | subagent | web_setup_sop | ★plan_sop[已审阅] | env_audit_sop | system_monitor_sop | backup_verify_sop | dep_check_sop | git_hygiene_sop | daily_brief_sop | config_audit_sop | network_monitor_sop | file_org_analysis_sop | weekly_review_sop
+L4: L4_raw_sessions/ | salient_mining_sop | salient_mining.py(automated→scheduler every10min→L2)
+
+Web/UI: tmwebdriver_sop(cross-origin/cross-tab) | computer_use.md | vision_sop | ljqCtrl_sop | vue3_component_sop | vision_api.template.py
+Ops/Goals: scheduled_task_sop | autonomous_operation_sop | task_watchdog.py | goal_hive_sop | goal_mode_sop | incubator_sop | morphling_sop | task_runner_sop | reusable_task_runner_sop | sche_tasks/(health+ brief+ backup)
+Project: github_contribution_sop | ★checklist_sop+checklist_helper.py[已审阅] | goal_hive_master_duty | project_map_update_sop | health_check_sop
+MemTools: memory_cleanup_sop | memory_index_hygiene_sop | stale_sop_check.py | skill_search | procmem_scanner+procmem_scanner_sop | task_watchdog.py | keychain | ocr_utils | config_check.py
+Mobile: adb_ui.py
+
+[RULES]
+1. Search first: must use es for filename search (no PS recursion/no dir traversal), always prefer Google for web search (no duckduckgo etc), check cwd first, no guessing paths
+2. Cross-verify: never trust summaries, verify numbers on detail pages
+3. Encoding safety: use file_read not PS cat/type; read before modify; import memory modules directly (already in PATH, no fake prefixes)
+4. Close the loop: confirm after physical simulation; request intervention after 3 failures; complete Git workflow
+5. Processes: never kill python unconditionally (kills self), use exact PID, no os.kill for liveness check
+6. Windows: prefer win32gui title enumeration for GUI state
+7. Web JS: use native setter + event chain for input, check disabled before click, mind quote escaping; if scan empty/incomplete wait then rescan, no conclusions from first scan
+8. SOP: read SOPs not from memory, must use utils if available | complex long-running/user mentions planning -> read plan_sop
