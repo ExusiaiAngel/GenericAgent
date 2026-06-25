@@ -19,7 +19,7 @@
 
 ## 输入
 
-- `repo_path` (可选): 要检查的 Git 仓库路径，默认 `D:\GenericAgent`
+- `repo_path` (可选): 要检查的 Git 仓库路径，默认 `/opt/GenericAgent`
 
 ## 步骤
 
@@ -28,60 +28,60 @@
 将所有检查子命令合并为单个脚本执行，减少 round-trip：
 
 ```powershell
-$repo = "D:\GenericAgent"
+$repo = "/opt/GenericAgent"
 Set-Location $repo
 
-Write-Output "=== WORKSPACE STATUS ==="
+echo "=== WORKSPACE STATUS ==="
 git status --short 2>&1
-Write-Output "--- DIFF STAT ---"
+echo "--- DIFF STAT ---"
 git diff --stat 2>&1
-Write-Output "--- UNTRACKED SIZE ---"
+echo "--- UNTRACKED SIZE ---"
 git ls-files --others --exclude-standard 2>$null | ForEach-Object {
     $f = $_
-    $item = Get-Item $_ -ErrorAction SilentlyContinue
-    if ($item) { Write-Output "$($item.Length) $_" }
+    $item = ls -la $_ 2>/dev/null
+    if ($item) { echo "$($item.Length) $_" }
 }
 
-Write-Output ""
-Write-Output "=== BRANCHES ==="
+echo ""
+echo "=== BRANCHES ==="
 git branch -a 2>&1
-Write-Output "--- BRANCH TIMESTAMPS ---"
+echo "--- BRANCH TIMESTAMPS ---"
 git for-each-ref --sort=-committerdate --format='%(refname:short)  %(committerdate:relative)' refs/heads/ 2>&1
-Write-Output "--- RECENT COMMITS ---"
+echo "--- RECENT COMMITS ---"
 git log --oneline -10 2>&1
 
-Write-Output ""
-Write-Output "=== STASH ==="
+echo ""
+echo "=== STASH ==="
 git stash list 2>&1
 
-Write-Output ""
-Write-Output "=== REMOTE ==="
+echo ""
+echo "=== REMOTE ==="
 git remote -v 2>&1
 
-Write-Output ""
-Write-Output "=== GITIGNORE ==="
-Get-Content .gitignore -ErrorAction SilentlyContinue
-if (-not $?) { Write-Output "NO .gitignore FOUND" }
+echo ""
+echo "=== GITIGNORE ==="
+Get-Content .gitignore 2>/dev/null
+if (-not $?) { echo "NO .gitignore FOUND" }
 
-Write-Output ""
-Write-Output "=== LARGE UNTRACKED FILES (>1MB) ==="
+echo ""
+echo "=== LARGE UNTRACKED FILES (>1MB) ==="
 git ls-files --others --exclude-standard 2>$null | ForEach-Object {
-    $item = Get-Item $_ -ErrorAction SilentlyContinue
+    $item = ls -la $_ 2>/dev/null
     if ($item -and $item.Length -gt 1048576) {
         $sizeMB = [math]::Round($item.Length / 1MB, 2)
-        Write-Output "$_ : ${sizeMB}MB"
+        echo "$_ : ${sizeMB}MB"
     }
 }
 
-Write-Output ""
-Write-Output "=== UNTRACKED DIRECTORIES TOTAL SIZE ==="
+echo ""
+echo "=== UNTRACKED DIRECTORIES TOTAL SIZE ==="
 git ls-files --others --exclude-standard --directory 2>$null | 
     ForEach-Object { $_ -replace '/[^/]*$', '' } | Sort-Object -Unique | ForEach-Object {
     $dir = $_
     if (Test-Path $dir) {
-        $size = (Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        $size = (ls $dir -Recurse 2>/dev/null | Measure-Object Length -Sum).Sum
         $sizeMB = [math]::Round(($size / 1MB), 2)
-        Write-Output "$dir : ${sizeMB}MB"
+        echo "$dir : ${sizeMB}MB"
     }
 }
 ```
@@ -108,7 +108,7 @@ git ls-files --others --exclude-standard --directory 2>$null |
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt
+/opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt
 ```
 
 ## 成功标准
@@ -124,18 +124,18 @@ D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt
 
 ```powershell
 # 检查输出文件存在且非空
-(Get-Content D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt | Measure-Object -Line).Lines
+(Get-Content /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt | Measure-Object -Line).Lines
 
 # 检查工作区状态标记
-Select-String -Path D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt -Pattern 'CLEAN|DIRTY'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern 'CLEAN|DIRTY'
 # 期望: >= 1
 
 # 检查 .gitignore 审计章节存在
-Select-String -Path D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt -Pattern 'gitignore|\.gitignore'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern 'gitignore|\.gitignore'
 # 期望: >= 3
 
 # 检查关键分区标题存在
-Select-String -Path D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt -Pattern '工作区|分支|Stash|gitignore|大文件|远程|总结|建议'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern '工作区|分支|Stash|gitignore|大文件|远程|总结|建议'
 # 期望: >= 5
 ```
 
@@ -155,7 +155,7 @@ Select-String -Path D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.tx
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\workspace\git_hygiene_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt`
 
 ## 版本记录
 

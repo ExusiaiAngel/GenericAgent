@@ -2,7 +2,7 @@
 
 **检查时间**: 2026-06-10
 **环境**: Windows 11 (64-bit, i7-13700H, 32GB)
-**Python**: 3.13.13 at C:\Users\Exusiai\AppData\Local\Programs\Python\Python313\python.exe
+**Python**: 3.13.13 at /usr/bin/python3
 **状态**: 🟢 LAUNCH READY
 
 ---
@@ -12,7 +12,7 @@
 | 项目 | 值 |
 |------|-----|
 | 操作系统 | Windows 11 Home China 10.0.26200 |
-| Python | 3.13.13 (C:\Users\Exusiai\AppData\Local\Programs\Python\Python313\python.exe) |
+| Python | 3.13.13 (/usr/bin/python3) |
 | Shell | PowerShell 7+ / Git Bash |
 | 浏览器 | Microsoft Edge (Chromium 149), Profile: Exusiai |
 
@@ -26,7 +26,7 @@
 | `ga.py` | ✅ | 主代理 |
 | `llmcore.py` | ✅ | 核心 LLM 通信 |
 | `TMWebDriver.py` | ✅ | WebDriver (simple-websocket-server + bottle) |
-| `ga.cmd` | ✅ | Windows CLI 启动脚本 |
+| `ga.sh` | ✅ | Windows CLI 启动脚本 |
 
 ## 3. 核心模块导入测试
 
@@ -52,7 +52,7 @@
 
 | 路径 | 状态 |
 |------|:----:|
-| `D:\GenericAgent\sandbox\` | ✅ |
+| `/opt/GenericAgent/sandbox\` | ✅ |
 | `inbox/` | ✅ |
 | `workspace/` | ✅ |
 | `reports/` | ✅ |
@@ -62,7 +62,7 @@
 
 ### 推荐启动
 ```powershell
-cd D:\GenericAgent
+cd /opt/GenericAgent
 python agentmain.py
 ```
 
@@ -70,7 +70,7 @@ python agentmain.py
 ```powershell
 python -m ga_cli
 # 或
-ga.cmd
+ga.sh
 ```
 
 ## 7. 验证结果

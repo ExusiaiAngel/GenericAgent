@@ -1,23 +1,23 @@
 {
   "personal_bootstrap_profile.md": {
-    "count": 10,
-    "last": "2026-06-12"
+    "count": 11,
+    "last": "2026-06-22"
   },
   "cold_start_task_queue.md": {
-    "count": 27,
-    "last": "2026-06-12"
+    "count": 28,
+    "last": "2026-06-25"
   },
   "personal_supervision_sop.md": {
     "count": 5,
     "last": "2026-06-09"
   },
   "global_mem_insight.txt": {
-    "count": 43,
-    "last": "2026-06-12"
+    "count": 51,
+    "last": "2026-06-22"
   },
   "memory_management_sop.md": {
-    "count": 8,
-    "last": "2026-06-11"
+    "count": 10,
+    "last": "2026-06-22"
   },
   "sandbox_policy.md": {
     "count": 22,
@@ -36,8 +36,8 @@
     "last": "2026-06-11"
   },
   "global_mem.txt": {
-    "count": 18,
-    "last": "2026-06-12"
+    "count": 27,
+    "last": "2026-06-25"
   },
   "memory_index_hygiene_sop.md": {
     "count": 7,
@@ -52,16 +52,16 @@
     "last": "2026-06-08"
   },
   "project_map.md": {
-    "count": 19,
-    "last": "2026-06-12"
+    "count": 20,
+    "last": "2026-06-25"
   },
   "launch_readiness_check_sop.md": {
-    "count": 5,
-    "last": "2026-06-11"
+    "count": 7,
+    "last": "2026-06-13"
   },
   "plan_sop.md": {
-    "count": 5,
-    "last": "2026-06-12"
+    "count": 7,
+    "last": "2026-06-22"
   },
   "task_runner_sop.md": {
     "count": 9,
@@ -84,8 +84,8 @@
     "last": "2026-06-12"
   },
   "scheduled_task_sop.md": {
-    "count": 5,
-    "last": "2026-06-12"
+    "count": 9,
+    "last": "2026-06-22"
   },
   "memory_cleanup_sop.md": {
     "count": 2,
@@ -112,20 +112,20 @@
     "last": "2026-06-11"
   },
   "backup_verify_sop.md": {
-    "count": 7,
-    "last": "2026-06-12"
+    "count": 9,
+    "last": "2026-06-24"
   },
   "env_audit_sop.md": {
-    "count": 3,
-    "last": "2026-06-11"
+    "count": 4,
+    "last": "2026-06-13"
   },
   "github_contribution_sop.md": {
     "count": 3,
     "last": "2026-06-12"
   },
   "dep_check_sop.md": {
-    "count": 5,
-    "last": "2026-06-11"
+    "count": 6,
+    "last": "2026-06-13"
   },
   "git_hygiene_sop.md": {
     "count": 3,
@@ -136,24 +136,24 @@
     "last": "2026-06-11"
   },
   "system_monitor_sop.md": {
-    "count": 3,
-    "last": "2026-06-11"
+    "count": 4,
+    "last": "2026-06-13"
   },
   "network_monitor_sop.md": {
     "count": 3,
     "last": "2026-06-11"
   },
   "daily_brief_sop.md": {
-    "count": 4,
-    "last": "2026-06-12"
+    "count": 7,
+    "last": "2026-06-22"
   },
   "sv_05_memory_audit.md": {
     "count": 1,
     "last": "2026-06-11"
   },
   "health_check_sop.md": {
-    "count": 6,
-    "last": "2026-06-12"
+    "count": 24,
+    "last": "2026-06-22"
   },
   "deep_research_sop.md": {
     "count": 1,
@@ -176,8 +176,8 @@
     "last": "2026-06-11"
   },
   "subagent.md": {
-    "count": 1,
-    "last": "2026-06-11"
+    "count": 2,
+    "last": "2026-06-22"
   },
   "salient_mining_sop.md": {
     "count": 2,
@@ -192,8 +192,8 @@
     "last": "2026-06-12"
   },
   "test_sop.md": {
-    "count": 2,
-    "last": "2026-06-12"
+    "count": 5,
+    "last": "2026-06-25"
   },
   "vision_sop.md": {
     "count": 1,
@@ -206,5 +206,9 @@
   "ljqCtrl_sop.md": {
     "count": 1,
     "last": "2026-06-12"
+  },
+  "adb_ui.py": {
+    "count": 1,
+    "last": "2026-06-22"
   }
 }

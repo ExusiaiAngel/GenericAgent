@@ -198,10 +198,29 @@ def batch_process(src, l4_dir=None, dry_run=True):
                 'sessions': [r[0] for r in results]}
 
     # Phase 2: Append history
-    with open(os.path.join(l4_dir, 'all_histories.txt'), 'a', encoding='utf-8') as f:
+    hist_path = os.path.join(l4_dir, 'all_histories.txt')
+    with open(hist_path, 'a', encoding='utf-8') as f:
         for sn, _, hist, _, _ in results:
             if hist: f.write('\n' + format_history_block(sn, hist))
     print(f"Appended {len(results)} sessions to all_histories.txt")
+
+    # Phase 2b: Cap all_histories.txt at 5MB
+    try:
+        size = os.path.getsize(hist_path)
+        MAX_HIST_SIZE = 5 * 1024 * 1024  # 5MB
+        if size > MAX_HIST_SIZE:
+            with open(hist_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Keep last 3MB, throw away older entries
+            keep_bytes = int(MAX_HIST_SIZE * 0.6)
+            if len(content.encode('utf-8')) > keep_bytes:
+                cutoff = max(content.rfind('\n', len(content) - keep_bytes), 0)
+                retained = content[cutoff:].strip()
+                with open(hist_path, 'w', encoding='utf-8') as f:
+                    f.write(retained + '\n')
+                print(f"  all_histories.txt trimmed: {size//1024}K → {len(retained.encode('utf-8'))//1024}K")
+    except Exception:
+        pass
 
     # Phase 3: Archive to monthly zips
     by_month = defaultdict(list)

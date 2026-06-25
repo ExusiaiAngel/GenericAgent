@@ -8,6 +8,11 @@ except NameError:
     _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
 
+# dedup: prevent same-task re-trigger within one check cycle
+_triggered_tasks: dict = {}
+_TRIGGERED_COOLDOWN = 60  # seconds
+_ts = __import__('time').time
+
 INTERVAL = 120
 ONCE = False
 
@@ -118,22 +123,31 @@ def check():
         if repeat == 'weekday' and now.weekday() >= 5: continue
         
         # 还没到schedule时间就跳过
-        if now.hour < h or (now.hour == h and now.minute < m): continue
-        
-        # 执行窗口检查：超过max_delay小时则跳过（防止开机太晚触发过时任务）
-        max_delay = task.get('max_delay_hours', DEFAULT_MAX_DELAY)
-        sched_minutes = h * 60 + m
-        now_minutes = now.hour * 60 + now.minute
-        if (now_minutes - sched_minutes) > max_delay * 60:
-            _logger.info(f'SKIP {tid}: {now_minutes - sched_minutes}min past schedule, '
-                         f'exceeds max_delay={max_delay}h')
-            continue
-        
-        # 检查冷却
         last = _last_run(tid, done_files)
         cooldown = _parse_cooldown(repeat)
+        overdue = last and (now - last) >= cooldown * 1.5
+        if now.hour < h or (now.hour == h and now.minute < m):
+            if overdue:
+                _logger.info(f"CATCHUP {tid}: last={last}, overdue, forcing pre-schedule run")
+            else:
+                continue
+        if not overdue:
+            max_delay = task.get("max_delay_hours", DEFAULT_MAX_DELAY)
+            sched_minutes = h * 60 + m
+            now_minutes = now.hour * 60 + now.minute
+            if (now_minutes - sched_minutes) > max_delay * 60:
+                _logger.info(f"SKIP {tid}: {now_minutes - sched_minutes}min past schedule, exceeds max_delay={max_delay}h")
+                continue
         if last and (now - last) < cooldown: continue
         
+        # dedup: skip if triggered within _TRIGGERED_COOLDOWN
+        if tid in _triggered_tasks and (_ts() - _triggered_tasks[tid]) < _TRIGGERED_COOLDOWN:
+            _logger.debug(f'DEDUP {tid}: skipped')
+            continue
+        _triggered_tasks[tid] = _ts()
+        expired = [k for k in _triggered_tasks if _ts() - _triggered_tasks[k] > _TRIGGERED_COOLDOWN * 2]
+        for k in expired: del _triggered_tasks[k]
+
         # 触发
         _logger.info(f'TRIGGER {tid} (repeat={repeat}, schedule={sched}, '
                      f'last_run={last})')

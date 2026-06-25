@@ -7,7 +7,7 @@
 
 ## 0. WARNING Input Security Rules
 
-> Command-line arguments are world-readable via `ps aux` / `Get-Process`.
+> Command-line arguments are world-readable via `ps aux` / `ps aux`.
 
 ### 0.1 Prefer `input.txt` over `--input`
 
@@ -20,11 +20,11 @@
 
 ```powershell
 # CORRECT -- write prompt to file, no cmdline exposure
-Set-Content -Path D:\GenericAgent\temp\task_dir\input.txt -Value "long prompt..."
-python agentmain.py --task D:\GenericAgent\temp\task_dir --once
+Set-Content -Path /opt/GenericAgent/temp\task_dir\input.txt -Value "long prompt..."
+python agentmain.py --task /opt/GenericAgent/temp\task_dir --once
 
 # WRONG -- prompt leaks to cmdline
-python agentmain.py --task D:\GenericAgent\temp\task_dir --input "long sensitive prompt..." --once
+python agentmain.py --task /opt/GenericAgent/temp\task_dir --input "long sensitive prompt..." --once
 ```
 
 ---
@@ -33,13 +33,13 @@ python agentmain.py --task D:\GenericAgent\temp\task_dir --input "long sensitive
 
 ```powershell
 # Supervisor Mode (background Popen): writes pid/stdout.log/stderr.log/done.json
-Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task D:\GenericAgent\temp --once
+Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task /opt/GenericAgent/temp --once
 
 # Debug Mode (foreground inline): stdout + output.txt + done.json
-Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task D:\GenericAgent\temp --nobg --once
+Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task /opt/GenericAgent/temp --nobg --once
 
 # --input shortcut (<=200 chars, no secrets, one-off only)
-python agentmain.py --task D:\GenericAgent\temp --input "short" --nobg --once
+python agentmain.py --task /opt/GenericAgent/temp --input "short" --nobg --once
 ```
 
 ---
@@ -144,10 +144,10 @@ Common errors: `"input.txt not found"` -> missing input; LLM exception -> check 
 
 ```powershell
 # Verify PID belongs to agentmain.py before killing
-$taskDir = "D:\GenericAgent\temp\task_dir"
-$pid = Get-Content "$taskDir\pid" -ErrorAction SilentlyContinue
-if ($pid -and (Get-Process -Id $pid -ErrorAction SilentlyContinue) -and 
-    (Get-CimInstance Win32_Process -Filter "ProcessId=$pid" | Where-Object CommandLine -match 'agentmain')) {
+$taskDir = "/opt/GenericAgent/temp\task_dir"
+$pid = Get-Content "$taskDir\pid" 2>/dev/null
+if ($pid -and (ps aux | grep -Id $pid 2>/dev/null) -and 
+    (ps aux -Filter "ProcessId=$pid" | Where-Object CommandLine -match 'agentmain')) {
     Stop-Process -Id $pid
 }
 
@@ -160,12 +160,12 @@ Set-Content -Path "$taskDir\_stop" -Value ""
 ## 8. Post-Spawn Verification
 
 ```powershell
-$taskDir = "D:\GenericAgent\temp\task_dir"
-python D:\GenericAgent\memory\task_watchdog.py "$taskDir" --timeout 300 --interval 5 --json
+$taskDir = "/opt/GenericAgent/temp\task_dir"
+python /opt/GenericAgent/memory\task_watchdog.py "$taskDir" --timeout 300 --interval 5 --json
 
 # Security: verify no prompt in cmdline
 if ($pid) {
-    $cmdline = (Get-CimInstance Win32_Process -Filter "ProcessId=$pid").CommandLine
+    $cmdline = (ps aux -Filter "ProcessId=$pid").CommandLine
     if ($cmdline -match '--input') { Write-Warning "--input used, prompt visible" }
 }
 ```
@@ -179,7 +179,7 @@ Use formal watchdog as primary gate; hand-written `ps`/`grep` is secondary.
 Process command lines are world-readable. Any user, monitoring tool, CI pipeline, or audit framework can see `--input` values. Writing to `input.txt` keeps content off the command line:
 
 ```
-python agentmain.py --task D:\GenericAgent\temp\task_dir --once
+python agentmain.py --task /opt/GenericAgent/temp\task_dir --once
 ```
 
 ## 版本记录

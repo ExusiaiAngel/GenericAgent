@@ -8,7 +8,7 @@
 - **Project Map:** `memory/project_map.md` — architecture overview, entrypoints, modules, frontends
 
 ## Safety Rules (Non-Negotiable)
-1. The only pre-approved write location is `/opt/GenericAgent/sandbox`. All other project directories are read-only by default
+1. The only pre-approved write location is `D:\GenericAgent\sandbox`. All other project directories are read-only by default
 2. Never modify/delete/overwrite real project files outside sandbox without explicit user approval. Required format: path + action + reason + verification
 3. No payments, destructive deletions, credential changes, or outbound messaging without confirmation
 4. Never store API keys, passwords, or tokens in memory files
@@ -17,7 +17,7 @@
 
 ## Common Commands
 - `python agentmain.py` — primary entrypoint
-- `python -m ga_cli` or `ga.sh` — CLI shortcut
+- `python -m ga_cli` or `ga.cmd` — CLI shortcut
 - `python hub.pyw` — hub GUI
 - `python agentmain.py --task <name> --nobg --once` — run task once (dir under `temp/`)
 - `python memory/task_watchdog.py <task_dir> --json` — supervise task

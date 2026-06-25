@@ -19,6 +19,8 @@ HELP_COMMANDS = (
     ("/review [scope]", "in-session code review; 默认审当前 git diff"),
     ("/llm", "查看当前模型列表"),
     ("/llm [n]", "切换到第 n 个模型"),
+    ("/subs", "列出所有子代理状态"),
+    ("/subs talk <id> <msg>", "向子代理发送消息"),
 )
 TELEGRAM_MENU_COMMANDS = (
     ("help", "显示帮助"),
@@ -57,6 +59,30 @@ def clean_reply(text):
     for pat in TAG_PATS:
         text = re.sub(pat, "", text or "", flags=re.DOTALL)
     return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
+
+def _extract_final_answer(text: str) -> str:
+    """聊天前端通用：清除 agent 工具调用噪音，只保留最终回复。"""
+    import re
+    E = "\U0001F6E0️?"
+    text = re.sub(
+        E + r"\s*Tool:\s*`[^`]+`\s*\U0001F4E5\s*args:\s*\n````[^`]*````\s*",
+        "", text, flags=re.DOTALL)
+    text = re.sub("[^\\S\\n]*" + E + "[^\\n]*", "", text)
+    text = re.sub(r"^\[(?:Action|Status|Info|SubAgent|Doc|MCP|QQGroup|Warn)\].*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub("<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
+    text = re.sub("<summary>.*?</summary>", "", text, flags=re.DOTALL)
+    text = re.sub("<tool_use>.*?</tool_use>", "", text, flags=re.DOTALL)
+    text = re.sub("<file_content>.*?</file_content>", "", text, flags=re.DOTALL)
+    text = re.sub("<earlier_context>.*?</earlier_context>", "", text, flags=re.DOTALL)
+    text = re.sub("<history>.*?</history>", "", text, flags=re.DOTALL)
+    text = re.sub("<key_info>.*?</key_info>", "", text, flags=re.DOTALL)
+    text = re.sub(r"^### \[WORKING MEMORY\].*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*{0,2}(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{3,}\*{0,2}", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[Turn \d+\].*?\.{3,}", "", text)
+    text = re.sub(r"```+\s*\n\s*```+\s*", "", text)
+    text = re.sub(r"^[`\-=*]{3,}\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def extract_files(text):
@@ -316,6 +342,21 @@ class AgentChatMixin:
             return await self.send_text(chat_id, answer, **ctx)
         if op == "/review":
             return await self.run_agent(chat_id, cmd, **ctx)
+        if op == "/subs":
+            from frontends.shared.sub_agent import list_subagents, talk
+            if len(parts) >= 3 and parts[1] == "talk":
+                r = talk(parts[2], " ".join(parts[3:]))
+                return await self.send_text(chat_id, r.get("reason", "ok"), **ctx)
+            subs = list_subagents()
+            if not subs:
+                return await self.send_text(chat_id, "📋 没有活跃的子代理。\n使用 /spawn <任务> 创建。\n使用 /subs talk <id> <消息> 发送消息。", **ctx)
+            lines = ["📋 子代理列表:"]
+            for s in subs:
+                icon = "🟢" if s["alive"] else "🔴"
+                lines.append(f"{icon} {s['id']}: {s['status']} | {s['progress'][:100]}")
+            lines.append("")
+            lines.append("发送 /subs talk <id> <消息> 与子代理通话")
+            return await self.send_text(chat_id, "\n".join(lines), **ctx)
         return await self.send_text(chat_id, HELP_TEXT, **ctx)
 
     async def run_agent(self, chat_id, text, **ctx):
@@ -323,7 +364,7 @@ class AgentChatMixin:
         self.user_tasks[chat_id] = state
         try:
             await self.send_text(chat_id, "思考中...", **ctx)
-            dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source)
+            dq = self.agent.put_task(f"{FILE_HINT}\n\n{text}", source=self.source, max_turns=12)
             last_ping = time.time()
             while state["running"]:
                 try:
@@ -334,7 +375,8 @@ class AgentChatMixin:
                         last_ping = time.time()
                     continue
                 if "done" in item:
-                    await self.send_done(chat_id, item.get("done", ""), **ctx)
+                    clean_text = _extract_final_answer(item.get("done", ""))
+                    await self.send_done(chat_id, clean_text, **ctx)
                     break
             if not state["running"]:
                 await self.send_text(chat_id, "⏹️ 已停止", **ctx)

@@ -22,7 +22,7 @@ Supervise GenericAgent as:
 5. Stop or challenge the worker if it attempts payment, deletion, credential changes, outbound messaging, or external account mutation without explicit confirmation.
 6. After three repeated failures on the same blocker, stop the loop and ask the user for intervention.
 7. Prefer short interventions. The worker should receive one correction at a time.
-8. During cold start, real project paths are read-only by default. The only pre-approved write path is `D:\GenericAgent\sandbox`.
+8. During cold start, real project paths are read-only by default. The only pre-approved write path is `/opt/GenericAgent/sandbox`.
 9. If the worker wants to modify any file outside the sandbox, require an explicit user approval naming the path and action.
 
 ## What To Monitor
@@ -40,7 +40,7 @@ Supervise GenericAgent as:
 - Did it ask before destructive or external side-effect actions?
 - Did it distinguish between different Python environments?
 - Did it avoid storing API keys, cookies, passwords, or tokens in memory?
-- Did it keep writes inside `D:\GenericAgent\sandbox` unless the user explicitly approved another path?
+- Did it keep writes inside `/opt/GenericAgent/sandbox` unless the user explicitly approved another path?
 - Did it avoid modifying project files during read-only exploration?
 
 ### Verification
@@ -48,7 +48,7 @@ Supervise GenericAgent as:
 - Did it run the command it claims works?
 - Did it capture exact output or an observable success state?
 - For any background `agentmain.py --task` run, did the supervisor use
-  `python D:\GenericAgent\memory\task_watchdog.py <task_dir> --json`
+  `python /opt/GenericAgent/memory\task_watchdog.py <task_dir> --json`
   as the primary completion gate?
 - Did it test at least one non-happy-path condition when risk is non-trivial?
 - Did it update launch readiness info after environment changes?
@@ -68,8 +68,8 @@ Use these exact terse interventions when needed:
 - `_intervene: 你正在用错误的Python环境做判断。确认在Windows Python 3.13下运行。`
 - `_intervene: 你没有读取相关 SOP。先读 SOP，再继续。`
 - `_intervene: 你把细节塞进了 global_mem_insight。请压缩成路由信息，细节放到专门文件。`
-- `_intervene: 停。当前阶段只能写入 D:\GenericAgent\sandbox。修改真实项目文件前必须请求用户确认。`
-- `_intervene: 请先把实验输出写到 sandbox\workspace 或 sandbox\reports，不要改原项目。`
+- `_intervene: 停。当前阶段只能写入 /opt/GenericAgent/sandbox。修改真实项目文件前必须请求用户确认。`
+- `_intervene: 请先把实验输出写到 sandbox/workspace 或 sandbox/reports，不要改原项目。`
 - `_intervene: 连续失败已达到阈值。停止尝试，报告根因和下一步需要用户确认的动作。`
 
 ## Supervision Report Format
@@ -105,13 +105,13 @@ If the user has not specified another task, supervise the cold-start queue in th
 Before live supervision, check whether a worker is running:
 
 ```powershell
-Get-Process python* | Where-Object { $_.CommandLine -match 'agentmain' } 2>$null
+ps aux | grep python | Where-Object { $_.CommandLine -match 'agentmain' } 2>$null
 ```
 
 If no worker is running, tell the user to start GenericAgent with:
 
 ```powershell
-cd D:\GenericAgent
+cd /opt/GenericAgent
 python agentmain.py
 ```
 
@@ -122,7 +122,7 @@ Then ask the user to paste the worker's current task/output, or point the superv
 For every supervised background task directory, prefer the formal watchdog:
 
 ```powershell
-python D:\GenericAgent\memory\task_watchdog.py <task_dir> --timeout 300 --interval 5 --json
+python /opt/GenericAgent/memory\task_watchdog.py <task_dir> --timeout 300 --interval 5 --json
 ```
 
 Accept completion only when watchdog reports `state=completed` and `exit_code=0`.

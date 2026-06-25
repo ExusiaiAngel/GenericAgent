@@ -30,59 +30,59 @@
 将所有监控子检查合并为一个脚本执行，减少 round-trip：
 
 ```powershell
-Write-Output "=== UPTIME ==="
+echo "=== UPTIME ==="
 $os = Get-CimInstance Win32_OperatingSystem
 $bootTime = $os.LastBootUpTime
 $uptime = (Get-Date) - $bootTime
-Write-Output "Uptime: $($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m $($uptime.Seconds)s"
-Write-Output "Boot time: $($bootTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+echo "Uptime: $($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m $($uptime.Seconds)s"
+echo "Boot time: $($bootTime.ToString('yyyy-MM-dd HH:mm:ss'))"
 $sessions = (Get-CimInstance Win32_ComputerSystem).UserName
-Write-Output "Logged in user: $sessions"
+echo "Logged in user: $sessions"
 
-Write-Output ""
-Write-Output "=== MEMORY ==="
+echo ""
+echo "=== MEMORY ==="
 $memTotal = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
 $memFree = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
 $memUsed = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1)
 $memPct = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize * 100, 1)
-Write-Output "Total: ${memTotal}GB"
-Write-Output "Used: ${memUsed}GB"
-Write-Output "Free: ${memFree}GB"
-Write-Output "Usage: ${memPct}%"
+echo "Total: ${memTotal}GB"
+echo "Used: ${memUsed}GB"
+echo "Free: ${memFree}GB"
+echo "Usage: ${memPct}%"
 
-Write-Output ""
-Write-Output "=== CPU ==="
-$cpu = Get-CimInstance Win32_Processor
-Write-Output "CPU: $($cpu.Name)"
-Write-Output "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
+echo ""
+echo "=== CPU ==="
+$cpu = ps auxor
+echo "CPU: $($cpu.Name)"
+echo "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
 $cpuLoad = $cpu.LoadPercentage
-Write-Output "Load: ${cpuLoad}%"
+echo "Load: ${cpuLoad}%"
 # Get current CPU usage via counter
-$cpuSample = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average
-Write-Output "Average Load: $([math]::Round($cpuSample.Average))%"
-Write-Output "Processes: $((Get-Process).Count)"
+$cpuSample = ps auxor | Measure-Object -Property LoadPercentage -Average
+echo "Average Load: $([math]::Round($cpuSample.Average))%"
+echo "Processes: $((ps aux).Count)"
 
-Write-Output ""
-Write-Output "=== TOP5 MEMORY PROCESSES ==="
-Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 6 |
+echo ""
+echo "=== TOP5 MEMORY PROCESSES ==="
+ps aux | grep | Sort-Object WorkingSet64 -Descending | Select-Object -First 6 |
     Select-Object Name, Id, @{N='WorkingSet(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}},
     @{N='CPU(s)';E={[math]::Round($_.TotalProcessorTime.TotalSeconds,1)}}
 
-Write-Output ""
-Write-Output "=== GENERICAGENT PROCESSES ==="
-$gaProcesses = Get-Process -Name python* -ErrorAction SilentlyContinue | 
+echo ""
+echo "=== GENERICAGENT PROCESSES ==="
+$gaProcesses = ps aux | grep -Name python* 2>/dev/null | 
     Where-Object { $_.CommandLine -match 'agentmain|GenericAgent|task_runner' } 2>$null
 if ($gaProcesses) {
     $gaProcesses | Select-Object Name, Id, @{N='WorkingSet(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}}, StartTime
 } else {
-    Write-Output "(no GenericAgent processes running)"
+    echo "(no GenericAgent processes running)"
 }
-Write-Output "--- all python processes ---"
-Get-Process -Name python* -ErrorAction SilentlyContinue | Select-Object Name, Id, @{N='WS(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}} | Format-Table -AutoSize
-if (-not $?) { Write-Output "(no python processes)" }
+echo "--- all python processes ---"
+ps aux | grep -Name python* 2>/dev/null | Select-Object Name, Id, @{N='WS(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}} | Format-Table -AutoSize
+if (-not $?) { echo "(no python processes)" }
 
-Write-Output ""
-Write-Output "=== DISK ==="
+echo ""
+echo "=== DISK ==="
 Get-PSDrive -PSProvider FileSystem | Where-Object Used -gt 0 |
     Select-Object Name, Root,
     @{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,1)}},
@@ -90,21 +90,21 @@ Get-PSDrive -PSProvider FileSystem | Where-Object Used -gt 0 |
     @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}},
     @{N='Used%';E={[math]::Round($_.Used/($_.Used+$_.Free)*100,1)}} | Format-Table -AutoSize
 
-Write-Output ""
-Write-Output "=== RECENT SYSTEM EVENTS ==="
+echo ""
+echo "=== RECENT SYSTEM EVENTS ==="
 try {
-    Get-WinEvent -LogName System -MaxEvents 10 -ErrorAction Stop | 
+    Get-WinEvent -LogName System -MaxEvents 10 2>/dev/null | 
         Where-Object { $_.LevelDisplayName -match 'Error|Warning|Critical' } |
         Select-Object TimeCreated, Id, LevelDisplayName, @{N='Message(truncated)';E={$_.Message.Substring(0, [Math]::Min(100, $_.Message.Length))}} |
         Format-Table -AutoSize
 } catch {
-    Write-Output "(WinEvent access requires admin or limited logs available)"
-    Write-Output "--- Application errors ---"
+    echo "(WinEvent access requires admin or limited logs available)"
+    echo "--- Application errors ---"
     try {
-        Get-WinEvent -LogName Application -MaxEvents 5 -ErrorAction Stop |
+        Get-WinEvent -LogName Application -MaxEvents 5 2>/dev/null |
             Where-Object { $_.LevelDisplayName -match 'Error|Critical' } |
             Select-Object TimeCreated, Id, LevelDisplayName | Format-Table -AutoSize
-    } catch { Write-Output "(application log not available)" }
+    } catch { echo "(application log not available)" }
 }
 ```
 
@@ -139,7 +139,7 @@ try {
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\reports\system_monitor_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports\system_monitor_YYYY-MM-DD.md
 ```
 
 ## 成功标准
@@ -153,7 +153,7 @@ D:\GenericAgent\sandbox\reports\system_monitor_YYYY-MM-DD.md
 
 ```powershell
 # 检查输出文件存在且非空
-$reportPath = "D:\GenericAgent\sandbox\reports\system_monitor_$(Get-Date -Format 'yyyy-MM-dd').md"
+$reportPath = "/opt/GenericAgent/sandbox/reports\system_monitor_$(Get-Date -Format 'yyyy-MM-dd').md"
 (Get-Content $reportPath | Measure-Object -Line).Lines
 
 # 检查所有 7 个分区标题是否存在
@@ -179,7 +179,7 @@ Select-String -Path $reportPath -Pattern '\d+/100'
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\reports\system_monitor_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports\system_monitor_YYYY-MM-DD.md`
 
 ## 版本记录
 

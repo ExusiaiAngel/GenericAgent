@@ -1,88 +1,502 @@
 [
-  {"type": "function", "function": {
-    "name": "code_run",
-    "description": "Code executor. Prefer python. Multi-call OK, use script param. Reply code block is executed if no script arg; prefer for single call to avoid escaping. No hardcoding bulk data",
-    "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "[Mutually exclusive] NEVER use this param when use reply code block."},
-      "type": {"type": "string", "enum": ["python", "powershell"], "description": "Code type", "default": "python"},
-      "timeout": {"type": "integer", "description": "in seconds", "default": 60},
-      "cwd": {"type": "string", "description": "Working directory, defaults to cwd"},
-      "inline_eval": {"type": "boolean", "description": "DO NOT USE except explicitly specified."}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_read",
-    "description": "Read file. Read before modify for latest context and line numbers",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "Relative or absolute"},
-      "start": {"type": "integer", "description": "Start line number (1-based)"},
-      "count": {"type": "integer", "description": "Number of lines to read", "default": 200},
-      "keyword": {"type": "string", "description": "[Optional] If provided, returns first match (case-insensitive) with context"},
-      "show_linenos": {"type": "boolean", "description": "Show line numbers", "default": true}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_patch",
-    "description": "Replace unique old_content with new_content. Exact match required (whitespace/indentation). On failure, file_read to recheck",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "File path"},
-      "old_content": {"type": "string", "description": "Original text block to replace (must be unique)"},
-      "new_content": {"type": "string", "description": "New content. Supports {{file:path:startLine:endLine}} to ref file lines, auto-expanded"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_write",
-    "description": "Create/overwrite/append files. HUGE edits ONLY. Supports {{file:path:startLine:endLine}}, auto-expanded",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "File path"},
-      "content": {"type": "string"},	
-      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "Write mode", "default": "overwrite"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_scan",
-    "description": "Get simplified HTML and tab list. Removes hidden/floating/covered elements. Call after switching pages",
-    "parameters": {"type": "object", "properties": {
-      "tabs_only": {"type": "boolean", "description": "Show tab list only, no HTML"},
-      "switch_tab_id": {"type": "string", "description": "[Optional] Tab ID to switch to"},
-      "text_only": {"type": "boolean", "description": "Plain text only, no HTML"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_execute_js",
-    "description": "Execute JS. Multi-call OK with different switch_tab_id. No guessing. Act accurately to reduce web_scan calls. Execute JS in ```javascript blocks if no script arg, prefer to avoid escaping",
-    "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "[Mutually exclusive] JS code or script path. NEVER use this param when use reply code block"},
-      "save_to_file": {"type": "string", "description": "file path; **only** for long result"},
-      "no_monitor": {"type": "boolean", "description": "Skip page change monitoring, saves 2-3s. Only for reads, not for page actions"},
-      "switch_tab_id": {"type": "string", "description": "[Optional] Tab ID to switch to before executing"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_search",
-    "description": "Search the web via DuckDuckGo. Returns titles, URLs, and snippets. Use for: fact-checking, current events, documentation lookup, error research, or any knowledge beyond your training cutoff. Prefer this over guessing. Never search for URLs you already know.",
-    "parameters": {"type": "object", "properties": {
-      "query": {"type": "string", "description": "Search query string. Be specific — include version numbers, dates, or error codes when relevant."},
-      "max_results": {"type": "integer", "description": "Max results to return (1-15)", "default": 8}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_fetch",
-    "description": "Fetch a URL and extract readable text content. Strips HTML tags, scripts, and styles. Use when web_search returns a promising URL and you need the full page content for detailed reading.",
-    "parameters": {"type": "object", "properties": {
-      "url": {"type": "string", "description": "Full URL to fetch (must include https://)"},
-      "max_chars": {"type": "integer", "description": "Max characters to return (default 6000, max 15000)", "default": 6000}}}
-  }},
-  {"type": "function", "function": {
-    "name": "update_working_checkpoint",
-    "description": "Short-term working notepad, auto-injected each turn to prevent info loss in long tasks. Call during early/mid stages, not at end. When: (1) after reading SOP, store user needs & key constraints (skip for simple 1-2 step tasks); (2) before subtask switch or context flush; (3) after repeated failures, re-read SOP and must store new findings; (4) on new task, update content, clear old progress but keep valid constraints.\n\nDon't call: simple tasks (1-2 steps), task completed (use long-term memory tool)",
-    "parameters": {"type": "object", "properties": {
-      "key_info": {"type": "string", "description": "Replaces current notepad (<200 tokens). Incremental update: review existing, keep valid, add/remove/modify. Store: pitfalls, user requirements, key params/findings, file paths, progress, next steps. Don't store: ephemeral info, obvious context, old task info when user switched tasks. Prefer over-updating over losing key info"},
-      "related_sop": {"type": "string", "description": "Related SOP names, tips for further re-read"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "ask_user",
-    "description": "Interrupt task to ask user when needing decisions, extra info, or facing unresolvable blockers",
-    "parameters": {"type": "object", "properties": {
-      "question": {"type": "string", "description": "Question for the user"},
-      "candidates": {"type": "array", "items": {"type": "string"}, "description": "Optional quick-select choices for the user"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "start_long_term_update",
-    "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed",
-    "parameters": {"type": "object", "properties": {}}}
+  {
+    "type": "function",
+    "function": {
+      "name": "code_run",
+      "description": "Code executor. Supports python/bash. Prefer Python. For multi-step tasks, write one complete Python script instead of multiple tool calls — saves 50%+ tokens. Also supports bash/sh/shell. Reply code block executed if no script arg.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "[Mutually exclusive] NEVER use this param when use reply code block."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "python",
+              "bash",
+              "powershell"
+            ],
+            "description": "Code type: python, bash, or powershell",
+            "default": "python"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "in seconds (default 120)",
+            "default": 120
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory, defaults to cwd"
+          },
+          "inline_eval": {
+            "type": "boolean",
+            "description": "DO NOT USE except explicitly specified."
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_read",
+      "description": "Read file. Read before modify for latest context and line numbers",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative or absolute"
+          },
+          "start": {
+            "type": "integer",
+            "description": "Start line number (1-based)"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of lines to read",
+            "default": 200
+          },
+          "keyword": {
+            "type": "string",
+            "description": "[Optional] If provided, returns first match (case-insensitive) with context"
+          },
+          "show_linenos": {
+            "type": "boolean",
+            "description": "Show line numbers",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_patch",
+      "description": "Replace unique old_content with new_content. Exact match required (whitespace/indentation). On failure, file_read to recheck",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path"
+          },
+          "old_content": {
+            "type": "string",
+            "description": "Original text block to replace (must be unique)"
+          },
+          "new_content": {
+            "type": "string",
+            "description": "New content. Supports {{file:path:startLine:endLine}} to ref file lines, auto-expanded"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_write",
+      "description": "Create/overwrite/append files. HUGE edits ONLY. Supports {{file:path:startLine:endLine}}, auto-expanded",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path"
+          },
+          "content": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "append",
+              "prepend"
+            ],
+            "description": "Write mode",
+            "default": "overwrite"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_scan",
+      "description": "Get simplified HTML and tab list. Removes hidden/floating/covered elements. Call after switching pages",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabs_only": {
+            "type": "boolean",
+            "description": "Show tab list only, no HTML"
+          },
+          "switch_tab_id": {
+            "type": "string",
+            "description": "[Optional] Tab ID to switch to"
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "Plain text only, no HTML"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_execute_js",
+      "description": "Execute JS. Multi-call OK with different switch_tab_id. No guessing. Act accurately to reduce web_scan calls. Execute JS in ```javascript blocks if no script arg, prefer to avoid escaping",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "[Mutually exclusive] JS code or script path. NEVER use this param when use reply code block"
+          },
+          "save_to_file": {
+            "type": "string",
+            "description": "file path; **only** for long result"
+          },
+          "no_monitor": {
+            "type": "boolean",
+            "description": "Skip page change monitoring, saves 2-3s. Only for reads, not for page actions"
+          },
+          "switch_tab_id": {
+            "type": "string",
+            "description": "[Optional] Tab ID to switch to before executing"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "Search the web via multiple backends (DuckDuckGo/Bing with auto-fallback). Returns titles, URLs, and snippets. Use for: fact-checking, current events, documentation lookup, error research. Never search for URLs you already know.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query string. Be specific — include version numbers, dates, or error codes when relevant."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Max results to return (1-15)",
+            "default": 8
+          },
+          "source": {
+            "type": "string",
+            "enum": ["auto", "duckduckgo", "bing"],
+            "description": "Search source (auto=try duckduckgo, fallback bing)",
+            "default": "auto"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "Fetch a URL and extract readable text content. Strips HTML tags, scripts, and styles. Supports save_to_file to persist results. Use when web_search returns a promising URL and you need the full page content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Full URL to fetch (must include https://)"
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Max characters to return (default 6000, max 15000)",
+            "default": 6000
+          },
+          "save_to_file": {
+            "type": "string",
+            "description": "[Optional] If set, saves full content to this file path for later reading",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_working_checkpoint",
+      "description": "Short-term working notepad, auto-injected each turn to prevent info loss in long tasks. Call during early/mid stages, not at end. When: (1) after reading SOP, store user needs & key constraints (skip for simple 1-2 step tasks); (2) before subtask switch or context flush; (3) after repeated failures, re-read SOP and must store new findings; (4) on new task, update content, clear old progress but keep valid constraints.\n\nDon't call: simple tasks (1-2 steps), task completed (use long-term memory tool)",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key_info": {
+            "type": "string",
+            "description": "Replaces current notepad (<200 tokens). Incremental update: review existing, keep valid, add/remove/modify. Store: pitfalls, user requirements, key params/findings, file paths, progress, next steps. Don't store: ephemeral info, obvious context, old task info when user switched tasks. Prefer over-updating over losing key info"
+          },
+          "related_sop": {
+            "type": "string",
+            "description": "Related SOP names, tips for further re-read"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_user",
+      "description": "Interrupt task to ask user when needing decisions, extra info, or facing unresolvable blockers",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Question for the user"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional quick-select choices for the user"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_long_term_update",
+      "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "jmcomic_download",
+      "description": "从禁漫天堂(JMComic)下载漫画本子。传入漫画的车号(album_id)即可下载全部章节图片。下载完成后返回[FILE:path]引用供后续使用。图片会被下载到temp/jmcomic/目录。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "禁漫天堂漫画的车号/album_id，例如 123456"
+          }
+        },
+        "required": [
+          "album_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "doc_edit",
+      "description": "读写编辑 Office 文档。支持 .docx（含标题/段落/表格/格式）和 .xlsx（电子表格）。用于写报告、做表格、改合同等文书工作。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "create",
+              "edit"
+            ],
+            "description": "操作类型: read=读取文档, create=创建文档, edit=编辑现有文档"
+          },
+          "path": {
+            "type": "string",
+            "description": "文件路径（create时是输出路径）"
+          },
+          "title": {
+            "type": "string",
+            "description": "[create] 文档标题"
+          },
+          "content": {
+            "type": "array",
+            "description": "[create] 文档内容结构。每项: {\"type\":\"heading\",\"text\":\"...\",\"level\":1} | {\"type\":\"paragraph\",\"text\":\"...\",\"bold\":false} | {\"type\":\"table\",\"headers\":[...],\"rows\":[[...]]} | {\"type\":\"page_break\"}",
+            "items": {
+              "type": "object"
+            }
+          },
+          "operations": {
+            "type": "array",
+            "description": "[edit] 编辑操作。每项: {\"op\":\"append_paragraph\",\"text\":\"...\"} | {\"op\":\"append_heading\",\"text\":\"...\",\"level\":2} | {\"op\":\"replace_text\",\"old\":\"...\",\"new\":\"...\"} | {\"op\":\"append_table\",\"headers\":[...],\"rows\":[[...]]}",
+            "items": {
+              "type": "object"
+            }
+          },
+          "sheet": {
+            "type": "string",
+            "description": "[xlsx] 工作表名（可选）"
+          }
+        },
+        "required": [
+          "action",
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "spawn_subagent",
+      "description": "创建子代理执行并行任务。子代理拥有独立 LLM 上下文和完整工具集，完成后结果可通过 collect_subagent 获取。子代理间可通过文件共享数据（写入 temp/ 互相读取）。适合搜索/代码/文档等耗时任务。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "子代理的任务描述（作为 user prompt 输入）"
+          },
+          "max_turns": {
+            "type": "integer",
+            "description": "最大执行轮次（默认 30）",
+            "default": 30
+          }
+        },
+        "required": [
+          "task"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_subagents",
+      "description": "列出所有子代理及其状态。返回每个子代理的 ID、存活状态、进度、轮次等信息。",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "talk_subagent",
+      "description": "向运行中的子代理发送消息。用于指导子代理、追加需求或纠正方向。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "子代理 ID"
+          },
+          "message": {
+            "type": "string",
+            "description": "要发送的消息"
+          }
+        },
+        "required": [
+          "id",
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "collect_subagent",
+      "description": "收集已结束的子代理结果。仅对已完成的子代理有效。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "子代理 ID"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_call",
+      "description": "调用外部 MCP 服务器的工具。用于对接社区 10000+ 现成 MCP 服务（GitHub、Slack、Docker、数据库等）。需要服务器已配置在 mcp_cli 中。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "server": {
+            "type": "string",
+            "description": "MCP 服务器名称（如 github、postgres、docker）"
+          },
+          "tool": {
+            "type": "string",
+            "description": "工具名称（如 create_issue、query、list_containers）"
+          },
+          "args": {
+            "type": "object",
+            "description": "工具参数，key-value 形式",
+            "default": {}
+          }
+        },
+        "required": [
+          "server",
+          "tool"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "qq_group_op",
+      "description": "QQ 群管理操作。可禁言、解禁、踢人、发群公告。需要知道群号(group_id)和用户QQ号(user_id)。禁言时间(duration)单位为秒，默认600秒。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": ["ban", "unban", "kick", "notice"],
+            "description": "操作类型: ban=禁言, unban=解禁, kick=踢出群, notice=发群公告"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "[ban/unban/kick] 目标用户 QQ 号"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "群号"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "[ban] 禁言时长（秒），默认600",
+            "default": 600
+          },
+          "text": {
+            "type": "string",
+            "description": "[notice] 公告内容"
+          }
+        },
+        "required": [
+          "op",
+          "group_id"
+        ]
+      }
+    }
   }
 ]

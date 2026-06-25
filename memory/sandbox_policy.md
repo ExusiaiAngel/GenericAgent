@@ -7,29 +7,29 @@ GenericAgent is in cold-start supervised mode.
 Real project directories are read-only by default. The only pre-approved write location is:
 
 ```text
-D:\GenericAgent\sandbox
+/opt/GenericAgent/sandbox
 ```
 
 ## Allowed Without Asking
 
-- Read files under `D:\GenericAgent`.
-- Create drafts under `D:\GenericAgent\sandbox\workspace`.
-- Create reports under `D:\GenericAgent\sandbox\reports`.
-- Copy user-provided samples into `D:\GenericAgent\sandbox\inbox`.
-- Move only sandbox-created files into `D:\GenericAgent\sandbox\trash_review`.
+- Read files under `/opt/GenericAgent`.
+- Create drafts under `/opt/GenericAgent/sandbox/workspace`.
+- Create reports under `/opt/GenericAgent/sandbox/reports`.
+- Copy user-provided samples into `/opt/GenericAgent/sandbox/inbox`.
+- Move only sandbox-created files into `/opt/GenericAgent/sandbox/trash_review`.
 
 ## Artifact Placement
 
 When a task names a sandbox task directory, write deliverables with absolute
 paths under that directory. Do not rely on relative output paths for required
-artifacts; GenericAgent may resolve them under `D:\GenericAgent\temp`
+artifacts; GenericAgent may resolve them under `/opt/GenericAgent/temp`
 instead of the requested sandbox location.
 
 Before reporting PASS, verify every promised artifact by absolute path.
 
 ## Must Ask First
 
-- Modify any file outside `D:\GenericAgent\sandbox`.
+- Modify any file outside `/opt/GenericAgent/sandbox`.
 - Delete, move, or overwrite any real project file.
 - Edit `mykey.py` or any file that may contain credentials.
 - Send messages, make purchases, change accounts, or mutate external services.
@@ -52,7 +52,7 @@ Before writing outside the sandbox, ask for:
 If GenericAgent writes outside the sandbox without approval, the supervisor should issue:
 
 ```text
-_intervene: 停。当前阶段只能写入 D:\GenericAgent\sandbox。修改真实项目文件前必须请求用户确认。
+_intervene: 停。当前阶段只能写入 /opt/GenericAgent/sandbox。修改真实项目文件前必须请求用户确认。
 ```
 
 ## 版本记录

@@ -181,3 +181,8 @@ frontends/conductor_im_plugins/config.local.json
 sandbox/
 
 .claude/
+
+# SQLite database files (QQ session/guild data)
+*.db
+*.db-shm
+*.db-wal

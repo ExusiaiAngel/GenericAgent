@@ -30,87 +30,87 @@
 将所有六个检查区的命令合并为一个脚本执行，减少 round-trip：
 
 ```powershell
-Write-Output "=== INTERFACES ==="
-Write-Output "--- ipconfig ---"
+echo "=== INTERFACES ==="
+echo "--- ipconfig ---"
 ipconfig 2>&1
-Write-Output "--- interface count ---"
-(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up').Count
-Write-Output "--- default interface ---"
-Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | Select-Object Name, LinkSpeed
+echo "--- interface count ---"
+(ip link 2>/dev/null | Where-Object Status -eq 'Up').Count
+echo "--- default interface ---"
+ip link 2>/dev/null | Where-Object Status -eq 'Up' | Select-Object Name, LinkSpeed
 
-Write-Output ""
-Write-Output "=== ROUTING ==="
-Write-Output "--- default route ---"
-Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object DestinationPrefix, NextHop, InterfaceIndex, RouteMetric
-Write-Output "--- full routing table ---"
-Get-NetRoute -ErrorAction SilentlyContinue | Select-Object DestinationPrefix, NextHop, InterfaceAlias | Format-Table -AutoSize
-Write-Output "--- gateway reachable ---"
-$gateway = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
+echo ""
+echo "=== ROUTING ==="
+echo "--- default route ---"
+Get-NetRoute -DestinationPrefix '0.0.0.0/0' 2>/dev/null | Select-Object DestinationPrefix, NextHop, InterfaceIndex, RouteMetric
+echo "--- full routing table ---"
+Get-NetRoute 2>/dev/null | Select-Object DestinationPrefix, NextHop, InterfaceAlias | Format-Table -AutoSize
+echo "--- gateway reachable ---"
+$gateway = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' 2>/dev/null | Select-Object -First 1).NextHop
 if ($gateway) {
     Test-Connection -ComputerName $gateway -Count 2 -Quiet
-    Write-Output "Gateway: $gateway reachable"
+    echo "Gateway: $gateway reachable"
 } else {
-    Write-Output "WARNING: no default gateway found"
+    echo "WARNING: no default gateway found"
 }
 
-Write-Output ""
-Write-Output "=== DNS ==="
-Write-Output "--- DNS server addresses ---"
-Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
+echo ""
+echo "=== DNS ==="
+echo "--- DNS server addresses ---"
+Get-DnsClientServerAddress -AddressFamily IPv4 2>/dev/null | 
     Where-Object { $_.ServerAddresses } | Select-Object InterfaceAlias, ServerAddresses
-Write-Output "--- DNS server count ---"
-$dnsServers = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
+echo "--- DNS server count ---"
+$dnsServers = Get-DnsClientServerAddress -AddressFamily IPv4 2>/dev/null | 
     ForEach-Object { $_.ServerAddresses } | Sort-Object -Unique
-Write-Output "$($dnsServers.Count) unique DNS servers: $($dnsServers -join ', ')"
-Write-Output "--- DNS resolution (github.com) ---"
-Resolve-DnsName github.com -Type A -ErrorAction SilentlyContinue | Select-Object Name, IPAddress | Format-Table -AutoSize
-if (-not $?) { Write-Output "(DNS resolution failed)" }
-Write-Output "--- DNS resolution (pypi.org) ---"
-Resolve-DnsName pypi.org -Type A -ErrorAction SilentlyContinue | Select-Object Name, IPAddress | Format-Table -AutoSize
-if (-not $?) { Write-Output "(DNS resolution failed)" }
+echo "$($dnsServers.Count) unique DNS servers: $($dnsServers -join ', ')"
+echo "--- DNS resolution (github.com) ---"
+Resolve-DnsName github.com -Type A 2>/dev/null | Select-Object Name, IPAddress | Format-Table -AutoSize
+if (-not $?) { echo "(DNS resolution failed)" }
+echo "--- DNS resolution (pypi.org) ---"
+Resolve-DnsName pypi.org -Type A 2>/dev/null | Select-Object Name, IPAddress | Format-Table -AutoSize
+if (-not $?) { echo "(DNS resolution failed)" }
 
-Write-Output ""
-Write-Output "=== CONNECTIVITY ==="
-Write-Output "--- pypi.org HTTP ---"
+echo ""
+echo "=== CONNECTIVITY ==="
+echo "--- pypi.org HTTP ---"
 try {
-    $r = Invoke-WebRequest -Uri https://pypi.org -Method Head -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    Write-Output "pypi.org: $($r.StatusCode) ($($r.ContentLength) bytes)"
-} catch { Write-Output "pypi.org: FAILED ($($_.Exception.Message))" }
-Write-Output "--- github.com HTTP ---"
+    $r = curl -s https://pypi.org -Method Head -TimeoutSec 5 -UseBasicParsing 2>/dev/null
+    echo "pypi.org: $($r.StatusCode) ($($r.ContentLength) bytes)"
+} catch { echo "pypi.org: FAILED ($($_.Exception.Message))" }
+echo "--- github.com HTTP ---"
 try {
-    $r = Invoke-WebRequest -Uri https://github.com -Method Head -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    Write-Output "github.com: $($r.StatusCode)"
-} catch { Write-Output "github.com: FAILED ($($_.Exception.Message))" }
-Write-Output "--- google.com HTTP ---"
+    $r = curl -s https://github.com -Method Head -TimeoutSec 5 -UseBasicParsing 2>/dev/null
+    echo "github.com: $($r.StatusCode)"
+} catch { echo "github.com: FAILED ($($_.Exception.Message))" }
+echo "--- google.com HTTP ---"
 try {
-    $r = Invoke-WebRequest -Uri https://google.com -Method Head -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    Write-Output "google.com: $($r.StatusCode)"
-} catch { Write-Output "google.com: UNREACHABLE" }
-Write-Output "--- IPv4 connectivity ---"
+    $r = curl -s https://google.com -Method Head -TimeoutSec 5 -UseBasicParsing 2>/dev/null
+    echo "google.com: $($r.StatusCode)"
+} catch { echo "google.com: UNREACHABLE" }
+echo "--- IPv4 connectivity ---"
 Test-Connection -ComputerName 8.8.8.8 -Count 2 -Quiet
-if ($?) { Write-Output "IPv4: OK" } else { Write-Output "IPv4: FAILED" }
+if ($?) { echo "IPv4: OK" } else { echo "IPv4: FAILED" }
 
-Write-Output ""
-Write-Output "=== PORTS ==="
-Write-Output "--- listening TCP ports ---"
-Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | 
+echo ""
+echo "=== PORTS ==="
+echo "--- listening TCP ports ---"
+ss -tlnp -State Listen 2>/dev/null | 
     Select-Object LocalAddress, LocalPort, OwningProcess | Format-Table -AutoSize
-Write-Output "--- port count (TCP listen) ---"
-$ports = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue
-Write-Output "$($ports.Count) listening ports"
-Write-Output "--- unusual ports (>10000) ---"
+echo "--- port count (TCP listen) ---"
+$ports = ss -tlnp -State Listen 2>/dev/null
+echo "$($ports.Count) listening ports"
+echo "--- unusual ports (>10000) ---"
 $ports | Where-Object LocalPort -gt 10000 | Select-Object LocalPort, OwningProcess | Format-Table -AutoSize
 
-Write-Output ""
-Write-Output "=== PROXY ==="
-Write-Output "HTTP_PROXY=$([Environment]::GetEnvironmentVariable('HTTP_PROXY', 'User'))"
-Write-Output "HTTPS_PROXY=$([Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'User'))"
-Write-Output "NO_PROXY=$([Environment]::GetEnvironmentVariable('NO_PROXY', 'User'))"
-Write-Output "GENERICAGENT_PROXY=$([Environment]::GetEnvironmentVariable('GENERICAGENT_PROXY', 'User'))"
+echo ""
+echo "=== PROXY ==="
+echo "HTTP_PROXY=$([Environment]::GetEnvironmentVariable('HTTP_PROXY', 'User'))"
+echo "HTTPS_PROXY=$([Environment]::GetEnvironmentVariable('HTTPS_PROXY', 'User'))"
+echo "NO_PROXY=$([Environment]::GetEnvironmentVariable('NO_PROXY', 'User'))"
+echo "GENERICAGENT_PROXY=$([Environment]::GetEnvironmentVariable('GENERICAGENT_PROXY', 'User'))"
 # Also check process-level env
-Write-Output "--- process env ---"
-Write-Output "HTTP_PROXY=$env:HTTP_PROXY"
-Write-Output "HTTPS_PROXY=$env:HTTPS_PROXY"
+echo "--- process env ---"
+echo "HTTP_PROXY=$env:HTTP_PROXY"
+echo "HTTPS_PROXY=$env:HTTPS_PROXY"
 ```
 
 ### Step 2: 分析并生成报告
@@ -147,7 +147,7 @@ Write-Output "HTTPS_PROXY=$env:HTTPS_PROXY"
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\reports\network_monitor_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports\network_monitor_YYYY-MM-DD.md
 ```
 
 报告格式约束：
@@ -170,7 +170,7 @@ D:\GenericAgent\sandbox\reports\network_monitor_YYYY-MM-DD.md
 
 ```powershell
 # 检查输出文件存在且行数合理
-$reportPath = "D:\GenericAgent\sandbox\reports\network_monitor_$(Get-Date -Format 'yyyy-MM-dd').md"
+$reportPath = "/opt/GenericAgent/sandbox/reports\network_monitor_$(Get-Date -Format 'yyyy-MM-dd').md"
 (Get-Content $reportPath | Measure-Object -Line).Lines
 # 期望: >= 50 行
 
@@ -199,7 +199,7 @@ Select-String -Path $reportPath -Pattern 'pypi\.org|github\.com'
 
 | 尝试次数 | 操作 |
 |---------|------|
-| 第 1 次失败 | 检查单个命令是否因权限不足报错（某些网络 cmdlet 需要管理员权限）；`Get-NetAdapter` 失败时降级到 `ipconfig` |
+| 第 1 次失败 | 检查单个命令是否因权限不足报错（某些网络 cmdlet 需要管理员权限）；`ip link` 失败时降级到 `ipconfig` |
 | 第 2 次失败 | 跳过失败的命令，用 `try/catch` 兜底；继续生成不完整报告，缺失分区标记为 ⚠️ UNAVAILABLE |
 | 第 3 次失败 | 请求用户介入，展示失败的具体命令和错误输出 |
 
@@ -209,18 +209,18 @@ Select-String -Path $reportPath -Pattern 'pypi\.org|github\.com'
 |------|----------|
 | `Invoke-WebRequest` 外部站点 | 仅执行 HEAD 请求，不下载页面内容 |
 | `Test-Connection` | ICMP 包数量限制为 2 次 |
-| `Get-NetTCPConnection` | 需管理员权限可获取 OwningProcess；如失败，降级到无进程信息的端口列表 |
+| `ss -tlnp` | 需管理员权限可获取 OwningProcess；如失败，降级到无进程信息的端口列表 |
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\reports\network_monitor_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports\network_monitor_YYYY-MM-DD.md`
 
 ## 版本记录
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-09 | 基于 network monitor 任务 Pass 1 成功运行结晶 |
-| v2 | 2026-06-10 | 迁移至 Windows 原生 PowerShell 命令，替换 WSL/Linux 专用命令（ip→Get-NetAdapter, ss→Get-NetTCPConnection, dig→Resolve-DnsName 等） |
+| v2 | 2026-06-10 | 迁移至 Windows 原生 PowerShell 命令，替换 WSL/Linux 专用命令（ip→ip link, ss→ss -tlnp, dig→Resolve-DnsName 等） |
 
 ## Provenance
 

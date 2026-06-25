@@ -39,13 +39,66 @@ def get_pretty_json(data):
         data = data.copy(); data["script"] = data["script"].replace("; ", ";\n  ")
     return json.dumps(data, indent=2, ensure_ascii=False).replace('\\n', '\n')
 
-def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema, 
+def _make_stuck_key(tool_name, args):
+    """Generate a stable key for detecting repeated tool calls."""
+    if tool_name in ('no_tool', 'ask_user'): return None
+    a = {k: v for k, v in args.items() if k not in ('_index', '_tool_num')}
+    return (tool_name, json.dumps(a, sort_keys=True, ensure_ascii=False))
+
+
+class _StuckDetector:
+    """Detects agent stuck patterns: repeated calls, A-B-A-B loops, no progress."""
+    def __init__(self, max_repeat=4, max_aba=4):
+        self._history = []       # list of (tool_name, args_summary)
+        self._last_len = 0
+        self.max_repeat = max_repeat
+        self.max_aba = max_aba
+
+    def record(self, tool_calls, full_resp_len):
+        keys = []
+        for tc in tool_calls:
+            k = _make_stuck_key(tc.get('tool_name', ''), tc.get('args', {}))
+            if k: keys.append(k)
+        self._history.append(keys)
+        self._last_len = full_resp_len
+
+    def check(self, full_resp_len) -> str | None:
+        """Returns a warning string if stuck, or None."""
+        if not self._history: return None
+
+        # 1. Repeated same tool+args
+        recent = self._history[-self.max_repeat:]
+        if len(recent) >= self.max_repeat:
+            first = recent[0]
+            if len(first) == 1 and all(h == first for h in recent):
+                return f"⚠️ 检测到重复工具调用: {first[0][0]}（连续{self.max_repeat}次），请换思路"
+
+        # 2. A-B-A-B pattern (2-turn repeating cycle)
+        if len(self._history) >= self.max_aba:
+            last4 = self._history[-self.max_aba:]
+            if (len(last4[0]) == len(last4[2]) and len(last4[1]) == len(last4[3])
+                and last4[0] == last4[2] and last4[1] == last4[3]):
+                names = [k[0] for h in last4 for k in (h or [])]
+                return f"⚠️ 检测到循环模式: {' → '.join(names)}，请跳出循环"
+
+        # 3. No progress: same tool calls but output not growing (3+ turns)
+        if len(self._history) >= 3:
+            last3 = self._history[-3:]
+            if len(last3[0]) >= 1 and all(h == last3[0] for h in last3):
+                if abs(full_resp_len - self._last_len) < 20:
+                    return "⚠️ 连续3轮无进展，请换一种方式解决问题"
+
+        return None
+
+
+def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
                       max_turns=40, verbose=True, initial_user_content=None, yield_info=False):
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": initial_user_content if initial_user_content is not None else user_input}
     ]
     turn = 0;  handler.max_turns = max_turns
+    _stuck = _StuckDetector()
     _hook('agent_before', locals())
     while turn < handler.max_turns:
         turn += 1; turnstr = f'LLM Running (Turn {turn}) ...'
@@ -69,6 +122,12 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
         if not response.tool_calls: tool_calls = [{'tool_name': 'no_tool', 'args': {}}]
         else: tool_calls = [{'tool_name': tc.function.name, 'args': json.loads(tc.function.arguments), 'id': tc.id}
                           for tc in response.tool_calls]
+
+        # Stuck detection
+        _stuck.record(tool_calls, len(response.content or ''))
+        stuck_warn = _stuck.check(len(response.content or ''))
+        if stuck_warn:
+            yield f"\n\n{stuck_warn}\n\n"
        
         tool_results = []; next_prompts = set(); exit_reason = {}
         for ii, tc in enumerate(tool_calls):

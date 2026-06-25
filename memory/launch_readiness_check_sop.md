@@ -15,7 +15,7 @@
 
 1. 已读取 `memory/sandbox_policy.md` — 确认当前写入权限
 2. 已读取 `memory/personal_bootstrap_profile.md` — 确认用户边界
-3. 项目目录为 `D:\GenericAgent`
+3. 项目目录为 `/opt/GenericAgent`
 
 ## 输入
 
@@ -40,13 +40,13 @@ python -c "import sys; print(f'Python {sys.version}')"
 
 | 文件 | 检查方法 |
 |------|---------|
-| `mykey.py` | `Get-Item mykey.py` (存在即可，不打印 secret) |
-| `agentmain.py` | `Get-Item agentmain.py` |
-| `llmcore.py` | `Get-Item llmcore.py` |
-| `TMWebDriver.py` | `Get-Item TMWebDriver.py` |
-| `ga.cmd` (启动脚本) | `Get-Content ga.cmd -TotalCount 5` |
-| `env.sh` | `Get-Item env.sh` |
-| `pyproject.toml` | `Get-Item pyproject.toml` |
+| `mykey.py` | `ls -la mykey.py` (存在即可，不打印 secret) |
+| `agentmain.py` | `ls -la agentmain.py` |
+| `llmcore.py` | `ls -la llmcore.py` |
+| `TMWebDriver.py` | `ls -la TMWebDriver.py` |
+| `ga.sh` (启动脚本) | `Get-Content ga.sh -TotalCount 5` |
+| `env.sh` | `ls -la env.sh` |
+| `pyproject.toml` | `ls -la pyproject.toml` |
 
 ### Step 3: 核心模块导入测试
 

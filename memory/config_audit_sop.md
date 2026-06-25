@@ -28,62 +28,62 @@
 **安全红线**：以下命令均已做安全过滤 —— `git config --list` 使用 `Select-String -NotMatch` 排除 token/password 行；SSH 检查仅用 `Get-ChildItem` 列出文件，不使用 `Get-Content` 读取任何密钥内容。
 
 ```powershell
-Write-Output "=== SHELL ==="
-Write-Output "--- PowerShell version ---"
+echo "=== SHELL ==="
+echo "--- PowerShell version ---"
 $PSVersionTable.PSVersion
-Write-Output "--- profile files ---"
-$profile | Get-Item -ErrorAction SilentlyContinue | Select-Object FullName, Length, LastWriteTime
-if (-not $?) { Write-Output "profile: NOT FOUND" }
-Write-Output "--- execution policy ---"
+echo "--- profile files ---"
+$profile | ls -la 2>/dev/null | Select-Object FullName, Length, LastWriteTime
+if (-not $?) { echo "profile: NOT FOUND" }
+echo "--- execution policy ---"
 Get-ExecutionPolicy
 
-Write-Output ""
-Write-Output "=== GIT ==="
-Write-Output "--- git version ---"
+echo ""
+echo "=== GIT ==="
+echo "--- git version ---"
 git --version 2>&1
-Write-Output "--- git global config (SAFE: token/password filtered) ---"
+echo "--- git global config (SAFE: token/password filtered) ---"
 git config --list --global 2>&1 | Select-String -NotMatch -Pattern 'token|password|secret|key'
-Write-Output "--- git aliases ---"
+echo "--- git aliases ---"
 git config --global --get-regexp alias 2>&1
 
-Write-Output ""
-Write-Output "=== SSH ==="
+echo ""
+echo "=== SSH ==="
 $sshDir = "$env:USERPROFILE\.ssh"
-Write-Output "--- .ssh directory ---"
-Get-ChildItem $sshDir -ErrorAction SilentlyContinue | Select-Object Name, Length, LastWriteTime
-if (-not $?) { Write-Output ".ssh: NOT FOUND" }
-Write-Output "--- key count ---"
-$keys = Get-ChildItem "$sshDir\id_*" -ErrorAction SilentlyContinue
-Write-Output "$($keys.Count) key files"
-Write-Output "--- known_hosts ---"
-$knownHosts = Get-Item "$sshDir\known_hosts" -ErrorAction SilentlyContinue
+echo "--- .ssh directory ---"
+ls $sshDir 2>/dev/null | Select-Object Name, Length, LastWriteTime
+if (-not $?) { echo ".ssh: NOT FOUND" }
+echo "--- key count ---"
+$keys = Get-ChildItem "$sshDir\id_*" 2>/dev/null
+echo "$($keys.Count) key files"
+echo "--- known_hosts ---"
+$knownHosts = Get-Item "$sshDir\known_hosts" 2>/dev/null
 if ($knownHosts) {
-    Write-Output "known_hosts: $($knownHosts.Length) bytes"
+    echo "known_hosts: $($knownHosts.Length) bytes"
 } else {
-    Write-Output "known_hosts: NOT FOUND"
+    echo "known_hosts: NOT FOUND"
 }
-Write-Output "--- ssh-agent ---"
+echo "--- ssh-agent ---"
 ssh-add -l 2>&1
-if (-not $?) { Write-Output "ssh-agent not running or no identities" }
+if (-not $?) { echo "ssh-agent not running or no identities" }
 
-Write-Output ""
-Write-Output "=== ENV ==="
-Write-Output "--- GenericAgent/Python variables ---"
-Get-ChildItem Env: | Where-Object { $_.Name -match 'GENERICAGENT|PYTHON|PATH|PROXY' -and $_.Name -notmatch 'TOKEN|PASSWORD|SECRET|KEY' } | 
+echo ""
+echo "=== ENV ==="
+echo "--- GenericAgent/Python variables ---"
+ls Env: | Where-Object { $_.Name -match 'GENERICAGENT|PYTHON|PATH|PROXY' -and $_.Name -notmatch 'TOKEN|PASSWORD|SECRET|KEY' } | 
     Select-Object Name, Value
-Write-Output "--- key tool versions ---"
+echo "--- key tool versions ---"
 python --version 2>&1
 node --version 2>&1
-if (-not $?) { Write-Output "(node not installed)" }
+if (-not $?) { echo "(node not installed)" }
 npm --version 2>&1
-if (-not $?) { Write-Output "(npm not installed)" }
+if (-not $?) { echo "(npm not installed)" }
 
-Write-Output ""
-Write-Output "=== DOCKER ==="
-Write-Output "--- client ---"
+echo ""
+echo "=== DOCKER ==="
+echo "--- client ---"
 docker --version 2>&1
-if (-not $?) { Write-Output "(docker not installed)"; return }
-Write-Output "--- server info ---"
+if (-not $?) { echo "(docker not installed)"; return }
+echo "--- server info ---"
 docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Storage Driver|Containers:|Images:|Running'
 ```
 
@@ -121,7 +121,7 @@ docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Stora
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\reports\config_audit_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports\config_audit_YYYY-MM-DD.md
 ```
 
 报告格式约束：
@@ -143,7 +143,7 @@ D:\GenericAgent\sandbox\reports\config_audit_YYYY-MM-DD.md
 
 ```powershell
 # 检查输出文件存在且行数合理
-$reportPath = "D:\GenericAgent\sandbox\reports\config_audit_$(Get-Date -Format 'yyyy-MM-dd').md"
+$reportPath = "/opt/GenericAgent/sandbox/reports\config_audit_$(Get-Date -Format 'yyyy-MM-dd').md"
 (Get-Content $reportPath | Measure-Object -Line).Lines
 # 期望: >= 40 行
 
@@ -177,8 +177,8 @@ Select-String -Path $reportPath -Pattern '只读探测'
 | 操作 | 确认要求 |
 |------|----------|
 | `git config --list` | 必须过滤敏感值 |
-| `Get-ChildItem ~/.ssh/` | 只列出文件名和权限，**禁止** `Get-Content` 任何 `id_*` 文件内容 |
-| `Get-ChildItem Env:` | 过滤仅显示 `GENERICAGENT`/`PYTHON` 相关变量 |
+| `ls ~/.ssh/` | 只列出文件名和权限，**禁止** `Get-Content` 任何 `id_*` 文件内容 |
+| `ls Env:` | 过滤仅显示 `GENERICAGENT`/`PYTHON` 相关变量 |
 
 **安全红线（不可违反）**：
 1. **绝对禁止** `Get-Content` 任何 SSH 私钥文件
@@ -187,7 +187,7 @@ Select-String -Path $reportPath -Pattern '只读探测'
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\reports\config_audit_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports\config_audit_YYYY-MM-DD.md`
 
 ## 版本记录
 

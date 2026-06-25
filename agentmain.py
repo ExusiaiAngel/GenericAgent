@@ -37,7 +37,8 @@ def resolve_task_dir(task_arg, script_dir=script_dir):
 
 def load_tool_schema(suffix=''):
     global TOOLS_SCHEMA
-    TS = open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8').read()
+    with open(os.path.join(script_dir, f'assets/tools_schema{suffix}.json'), 'r', encoding='utf-8') as _f:
+        TS = _f.read()
     TOOLS_SCHEMA = json.loads(TS if os.name == 'nt' else TS.replace('powershell', 'bash'))
 load_tool_schema()
 
@@ -68,12 +69,15 @@ class GenericAgent:
         os.makedirs(os.path.join(script_dir, 'temp'), exist_ok=True)
         self.lock = threading.Lock()
         self.task_dir = None
-        self.history = []; self.handler = None; 
-        self.task_queue = queue.Queue() 
-        self.is_running = False; self.stop_sig = False; self.llm_no = 0;  
+        self.history = []; self.handler = None;
+        self.MAX_HISTORY = 60
+        self.task_queue = queue.Queue()
+        self.is_running = False; self.stop_sig = False; self.llm_no = 0;
         self.inc_out = False; self.verbose = True; self.show_mode = 'text'
         self.peer_hint = True
         self.force_non_stream = False
+        self.session_histories: dict[str, list] = {}
+        self.session_configs: dict[str, dict] = {}
         logid = f'{(time.time_ns() + random.randrange(1_000_000)) % 1_000_000:06d}'
         self.log_path = os.path.join(script_dir, f'temp/model_responses/model_responses_{logid}.txt')
         self.load_llm_sessions()
@@ -128,9 +132,10 @@ class GenericAgent:
         self.stop_sig = True
         if self.handler is not None: self.handler.code_stop_signal.append(1)
             
-    def put_task(self, query, source="user", images=None):
-        display_queue = queue.Queue()
-        self.task_queue.put({"query": query, "source": source, "images": images or [], "output": display_queue})
+    def put_task(self, query, source="user", images=None, max_turns=None, display_queue=None, reset_history=False):
+        if display_queue is None:
+            display_queue = queue.Queue()
+        self.task_queue.put({"query": query, "source": source, "images": images or [], "output": display_queue, "max_turns": max_turns, "reset_history": reset_history})
         return display_queue
 
     # i know it is dangerous, but raw_query is dangerous enough it doesn't enlarge
@@ -155,7 +160,7 @@ class GenericAgent:
         while True:
             task = self.task_queue.get()
             if isinstance(task, str): break
-            raw_query, source, display_queue = task["query"], task["source"], task["output"]
+            raw_query, source, display_queue, max_turns = task["query"], task["source"], task["output"], task.get("max_turns", None)
             raw_query = self._handle_slash_cmd(raw_query, display_queue)
             if raw_query is None:
                 self.task_queue.task_done(); continue
@@ -164,11 +169,51 @@ class GenericAgent:
                 task_file = os.path.join(script_dir, 'temp', f'user_prompt_{int(time.time())}.md')
                 with open(task_file, 'w', encoding='utf-8') as f: f.write(raw_query)
                 raw_query = f'Long user prompt saved to {task_file}. Read and execute.'
+            # ── Multi-session isolation ──
+            chat_id = task.get("chat_id")
+            if chat_id:
+                if chat_id not in self.session_histories:
+                    self.session_histories[chat_id] = []
+                self.history = self.session_histories[chat_id]
+            elif task.get("reset_history"):
+                self.history = []
+            # Auto model routing: simple queries → default model; complex → use existing selection
+            if len(raw_query) < 80 and not any(kw in raw_query.lower() for kw in ['代码', '写', '分析', '搜索', '查找', '查', '修复', '改', 'create', 'write', 'search', 'analyze']):
+                pass  # short chat — keep current model
             rquery = smart_format(raw_query.replace('\n', ' '), max_str_len=200)
             self.history.append(f"[USER]: {rquery}")
-            
+            if len(self.history) > self.MAX_HISTORY:
+                cutoff = len(self.history) - self.MAX_HISTORY
+                dropped = self.history[:cutoff]
+                self.history = self.history[cutoff:]
+                if dropped:
+                    self.history.insert(0, f"[SYSTEM]: {len(dropped)} older conversation turns truncated for context limit.")
+
             sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
             if self.peer_hint: sys_prompt += f"\n[Peer] 用户提及其他会话/后台任务状态时: temp/model_responses/ (只找近期修改的文件尾部)\n"
+            if source in ("ipc",):
+                ipc_style = task.get("personality", "")
+                style_note = f"\n对话风格: {ipc_style}" if ipc_style else ""
+                sys_prompt += (
+                    f"\n\n[QQ消息] 这是来自QQ的消息。每条消息独立轮次，但同一对话的历史会保留。{style_note}"
+                    "请快速分析需求（最多2轮思考），然后立即用 spawn_subagent 工具派发子代理执行实际任务。"
+                    "子代理会获得完整工具集，可以独立完成工作。"
+                    "收到派发结果后立即回复用户，简要说明你派发了什么子代理、它在做什么、以及让用户等待。"
+                    "绝对不要自己执行耗时操作（搜索、读文件、写代码等）——全部交给子代理。"
+                )
+            else:
+                # CodeAct-style + memory source tracking + cron registration
+                sys_prompt += (
+                    "\n\n[效率提示] 当需要多步操作时（如数据清洗、文件批处理、串行API调用等），"
+                    "优先用 code_run 写一段完整的 Python 脚本一次性完成，而不是分多次 tool call。"
+                    "例如：批量修改文件 → 用 Python 遍历+修改；数据爬取+分析 → 用 Python 一次性完成。"
+                    "这能大幅减少 token 消耗和处理时间。"
+                    "\n\n[记忆来源] 调用 start_long_term_update 保存事实时，请在 key_info 中注明信息来源。"
+                    "格式：[来源: 文件路径/URL/对话摘要] → 事实内容。这样后续可以追溯信息来源。"
+                    "\n\n[定时任务] 用户可以通过 QQ 消息请求注册定时任务。"
+                    "用 spawn_subagent 派发子代理去 reflect/scheduler.py 注册 check() 函数。"
+                    "调度器已加载 /opt/GenericAgent/reflect/scheduler.py。"
+                )
             handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
             if getattr(self, 'no_print', False): handler.print = lambda *a, **k: None
             if self.handler and 'key_info' in self.handler.working: 
@@ -182,7 +227,7 @@ class GenericAgent:
                 self.llmclient.backend.stream = False
                 self.llmclient.backend.read_timeout = max(self.llmclient.backend.read_timeout, 1200)
             gen = agent_runner_loop(self.llmclient, sys_prompt, raw_query, handler, TOOLS_SCHEMA, 
-                                    max_turns=80, verbose=self.verbose, yield_info=True)
+                                    max_turns=max_turns or 80, verbose=self.verbose, yield_info=True)
             try:
                 full_resp = ""; last_pos = 0; curr_turn = 0; turn_resps = []
                 for chunk in gen:
@@ -392,6 +437,13 @@ if __name__ == '__main__':
     agent.next_llm(args.llm_no)
     agent.verbose = args.verbose
     threading.Thread(target=agent.run, daemon=True).start()
+
+    # ── IPC server for frontend communication ──
+    try:
+        from frontends.shared.ipc_server import IpcServer
+        IpcServer(agent).start()
+    except Exception as e:
+        print(f"[IPC] server start skipped: {e}")
 
     if args.task:
         agent.peer_hint = False

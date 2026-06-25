@@ -22,7 +22,7 @@
 
 ## 输入
 
-无 — 使用默认 GenericAgent 工作区 `D:\GenericAgent`。
+无 — 使用默认 GenericAgent 工作区 `/opt/GenericAgent`。
 
 ## 步骤
 
@@ -31,41 +31,41 @@
 将所有备份检查合并为一个脚本执行，减少 round-trip：
 
 ```powershell
-Write-Output "=== CONFIG FILES STAT ==="
-Write-Output "--- mykey.py (stat only, NO cat) ---"
-Get-Item D:\GenericAgent\mykey.py | Select-Object Length, LastWriteTime
-Write-Output "--- env.sh ---"
-Get-Item D:\GenericAgent\env.sh | Select-Object Length, LastWriteTime
-Write-Output "--- pyproject.toml ---"
-Get-Item D:\GenericAgent\pyproject.toml | Select-Object Length, LastWriteTime
-Write-Output "--- .gitignore ---"
-Get-Item D:\GenericAgent\.gitignore | Select-Object Length, LastWriteTime
+echo "=== CONFIG FILES STAT ==="
+echo "--- mykey.py (stat only, NO cat) ---"
+ls -la /opt/GenericAgent/mykey.py, LastWriteTime
+echo "--- env.sh ---"
+ls -la /opt/GenericAgent/env.sh, LastWriteTime
+echo "--- pyproject.toml ---"
+ls -la /opt/GenericAgent/pyproject.toml, LastWriteTime
+echo "--- .gitignore ---"
+ls -la /opt/GenericAgent/.gitignore, LastWriteTime
 
-Write-Output ""
-Write-Output "=== GIT REMOTE ==="
-Set-Location D:\GenericAgent; git remote -v 2>&1
+echo ""
+echo "=== GIT REMOTE ==="
+cd /opt/GenericAgent && git remote -v 2>&1
 
-Write-Output ""
-Write-Output "=== GIT RECENT LOG ==="
-Set-Location D:\GenericAgent; git log --oneline -5 2>&1
+echo ""
+echo "=== GIT RECENT LOG ==="
+cd /opt/GenericAgent && git log --oneline -5 2>&1
 
-Write-Output ""
-Write-Output "=== MEMORY DIRECTORY ==="
-$memFiles = Get-ChildItem D:\GenericAgent\memory\*.md -ErrorAction SilentlyContinue
-Write-Output "--- file count: $($memFiles.Count) ---"
+echo ""
+echo "=== MEMORY DIRECTORY ==="
+$memFiles = ls /opt/GenericAgent/memory\*.md 2>/dev/null
+echo "--- file count: $($memFiles.Count) ---"
 $memSize = ($memFiles | Measure-Object Length -Sum).Sum
 $memSizeKB = [math]::Round($memSize / 1KB, 1)
-Write-Output "--- total size: ${memSizeKB}KB ---"
+echo "--- total size: ${memSizeKB}KB ---"
 
-Write-Output ""
-Write-Output "=== BACKUP FILES SCAN ==="
-Write-Output "--- bundles ---"
-Get-ChildItem D:\GenericAgent\sandbox\*.bundle -ErrorAction SilentlyContinue | Select-Object Name, Length
-Write-Output "--- backup files (excluding cache/workspace) ---"
-Get-ChildItem D:\GenericAgent\sandbox\*backup* -ErrorAction SilentlyContinue | 
+echo ""
+echo "=== BACKUP FILES SCAN ==="
+echo "--- bundles ---"
+ls /opt/GenericAgent/sandbox\*.bundle 2>/dev/null | Select-Object Name, Length
+echo "--- backup files (excluding cache/workspace) ---"
+ls /opt/GenericAgent/sandbox\*backup* 2>/dev/null | 
     Where-Object { $_.DirectoryName -notmatch 'cache|workspace' } | Select-Object Name, Length, LastWriteTime
-Write-Output "--- zip archives ---"
-Get-ChildItem D:\GenericAgent\sandbox\*.zip -ErrorAction SilentlyContinue | Select-Object Name, Length
+echo "--- zip archives ---"
+ls /opt/GenericAgent/sandbox\*.zip 2>/dev/null | Select-Object Name, Length
 ```
 
 ### Step 2: 分析并生成报告
@@ -95,7 +95,7 @@ Get-ChildItem D:\GenericAgent\sandbox\*.zip -ErrorAction SilentlyContinue | Sele
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\reports\backup_verify_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports/backup_verify_YYYY-MM-DD.md
 ```
 
 ## 成功标准
@@ -110,18 +110,18 @@ D:\GenericAgent\sandbox\reports\backup_verify_YYYY-MM-DD.md
 
 ```powershell
 # 检查输出文件存在且非空
-(Get-Content D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md | Measure-Object -Line).Lines
+(Get-Content /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md | Measure-Object -Line).Lines
 
 # 确认 mykey.py 未读内容
-Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '内容未读取'
+Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '内容未读取'
 # 期望: >= 1
 
 # 确认风险等级已评估
-Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '低|中|高|风险等级'
+Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '低|中|高|风险等级'
 # 期望: 至少一个匹配
 
 # 确认所有路径为绝对路径（以 D: 开头）
-Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern 'D:\\'
+Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern 'disk\'
 # 期望: >= 5
 ```
 
@@ -129,7 +129,7 @@ Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Fo
 
 | 尝试次数 | 操作 |
 |---------|------|
-| 第 1 次失败 | 检查单个命令是否因路径错误或权限问题报错；确认 `D:\GenericAgent\` 存在且可读 |
+| 第 1 次失败 | 检查单个命令是否因路径错误或权限问题报错；确认 `/opt/GenericAgent/` 存在且可读 |
 | 第 2 次失败 | 跳过失败的命令，用 `try/catch` 兜底；继续生成不完整报告，缺失项标记为 ⚠️ UNKNOWN |
 | 第 3 次失败 | 请求用户介入，展示失败的具体命令和错误输出 |
 
@@ -137,7 +137,7 @@ Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Fo
 
 | 操作 | 确认要求 |
 |------|----------|
-| `Get-Item mykey.py` | 只读元数据（大小、时间戳），不读内容 |
+| `ls -la mykey.py` | 只读元数据（大小、时间戳），不读内容 |
 | `git log` | 只读最近 commit 信息，不修改 Git 状态 |
 | `Get-ChildItem` 扫描 | 排除 `cache/` 和 `workspace/` 避免大量无关输出 |
 | 报告包含路径 | 所有路径必须为绝对路径，避免歧义 |
@@ -146,7 +146,7 @@ Select-String -Path D:\GenericAgent\sandbox\reports\backup_verify_$(Get-Date -Fo
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\reports\backup_verify_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports/backup_verify_YYYY-MM-DD.md`
 
 ## 版本记录
 

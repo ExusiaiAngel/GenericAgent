@@ -13,9 +13,9 @@
 对指定话题进行低风险网页调研，支持来源捕获和交叉验证。只做浏览/阅读/总结，不做账号操作或表单提交。
 
 ## Path Rule (CRITICAL)
-All output paths MUST be absolute. The agent's CWD during `--task` execution is `temp\`, so relative paths like `sandbox\reports\` will resolve incorrectly. Always use:
-- `D:\GenericAgent\sandbox\reports\` for reports
-- `D:\GenericAgent\sandbox\workspace\` for workspace files
+All output paths MUST be absolute. The agent's CWD during `--task` execution is `temp\`, so relative paths like `sandbox/reports\` will resolve incorrectly. Always use:
+- `/opt/GenericAgent/sandbox/reports\` for reports
+- `/opt/GenericAgent/sandbox/workspace\` for workspace files
 
 ## 前置条件
 
@@ -107,7 +107,7 @@ text = resp.read().decode("utf-8", errors="replace")
 
 ## 输出
 
-调研保存在沙箱中（`D:\GenericAgent\sandbox\`），包含:
+调研保存在沙箱中（`/opt/GenericAgent/sandbox\`），包含:
 - 来源列表（URL + HTTP 状态码）
 - 每个来源提取的内容摘要
 - 交叉验证结论
@@ -116,8 +116,8 @@ text = resp.read().decode("utf-8", errors="replace")
 
 ```powershell
 # 检查调研结果文件
-Get-ChildItem D:\GenericAgent\sandbox\web_research_*.md
-Select-String -Path D:\GenericAgent\sandbox\web_research_*.md -Pattern 'HTTP 200|交叉验证'
+ls /opt/GenericAgent/sandbox\web_research_*.md
+Select-String -Path /opt/GenericAgent/sandbox\web_research_*.md -Pattern 'HTTP 200|交叉验证'
 ```
 
 ## 演示示例

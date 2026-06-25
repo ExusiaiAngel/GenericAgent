@@ -19,7 +19,7 @@
 
 ## 输入
 
-无 — 默认使用 GenericAgent 工作区 (`D:\GenericAgent`)。
+无 — 默认使用 GenericAgent 工作区 (`/opt/GenericAgent`)。
 
 ## 步骤
 
@@ -30,7 +30,7 @@
 ```powershell
 # 并行执行两个操作：
 # 1. 读取 pyproject.toml
-Get-Content D:\GenericAgent\pyproject.toml
+Get-Content /opt/GenericAgent/pyproject.toml
 
 # 2. 列出已安装的包（JSON 格式）
 pip list --format=json 2>$null
@@ -57,7 +57,7 @@ pip list --format=json 2>$null
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt
+/opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt
 ```
 
 报告分区：
@@ -82,18 +82,18 @@ D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt
 
 ```powershell
 # 检查输出文件存在且非空
-(Get-Content D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt | Measure-Object -Line).Lines
+(Get-Content /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt | Measure-Object -Line).Lines
 
 # 检查关键状态标记是否存在
-Select-String -Path D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt -Pattern 'SATISFIED|MISSING|UNDECLARED'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern 'SATISFIED|MISSING|UNDECLARED'
 # 期望: >= 10 匹配
 
 # 检查汇总行存在
-Select-String -Path D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt -Pattern '汇总'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern '汇总'
 # 期望: >= 1
 
 # 检查分区标题
-Select-String -Path D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt -Pattern '\[project\]|core|ui|all-frontends|未声明'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern '\[project\]|core|ui|all-frontends|未声明'
 # 期望: >= 4
 ```
 
@@ -111,7 +111,7 @@ Select-String -Path D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt 
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\workspace\dep_check_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt`
 
 ## 版本记录
 

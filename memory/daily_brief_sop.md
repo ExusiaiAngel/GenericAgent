@@ -30,52 +30,52 @@
 将四个分区的所有检查合并为一个脚本执行，减少 round-trip：
 
 ```powershell
-Write-Output "=== SYSTEM ==="
+echo "=== SYSTEM ==="
 $os = Get-CimInstance Win32_OperatingSystem
 $bootTime = $os.LastBootUpTime
 $uptime = (Get-Date) - $bootTime
-Write-Output "Uptime: $($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
+echo "Uptime: $($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
 $memTotal = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
 $memFree = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
 $memUsedPct = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize * 100, 1)
-Write-Output "Memory: ${memUsedPct}% used (${memFree}GB free / ${memTotal}GB total)"
+echo "Memory: ${memUsedPct}% used (${memFree}GB free / ${memTotal}GB total)"
 Get-PSDrive C | Select-Object @{N='Used%';E={[math]::Round(($_.Used/$_.Used + $_.Free) * 100, 1)}}, Used, Free
 
-Write-Output ""
-Write-Output "=== PROJECTS ==="
-Set-Location D:\GenericAgent
-Write-Output "--- git log ---"
+echo ""
+echo "=== PROJECTS ==="
+Set-Location /opt/GenericAgent
+echo "--- git log ---"
 git log --oneline -5 2>&1
-Write-Output "--- git status ---"
+echo "--- git status ---"
 git status --short 2>&1
-Write-Output "--- commit count today ---"
+echo "--- commit count today ---"
 $today = Get-Date -Format 'yyyy-MM-dd'
 git log --oneline --after="$today 00:00" 2>&1 | Measure-Object -Line | Select-Object -ExpandProperty Lines
 
-Write-Output ""
-Write-Output "=== SECURITY ==="
-Write-Output "--- backup verification ---"
-Get-Item D:\GenericAgent\mykey.py | Select-Object Length, LastWriteTime
-Get-Item D:\GenericAgent\env.sh | Select-Object Length, LastWriteTime
-Get-Item D:\GenericAgent\pyproject.toml | Select-Object Length, LastWriteTime
-Get-Item D:\GenericAgent\.gitignore | Select-Object Length, LastWriteTime
-Set-Location D:\GenericAgent; git remote -v 2>&1
-Write-Output "--- agent processes ---"
-Get-Process python* -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'agentmain|task_runner' } 2>$null
-Write-Output "--- memory dir stats ---"
-$memFiles = Get-ChildItem D:\GenericAgent\memory\*.md -ErrorAction SilentlyContinue
-Write-Output "file count: $($memFiles.Count)"
+echo ""
+echo "=== SECURITY ==="
+echo "--- backup verification ---"
+ls -la /opt/GenericAgent/mykey.py, LastWriteTime
+ls -la /opt/GenericAgent/env.sh, LastWriteTime
+ls -la /opt/GenericAgent/pyproject.toml, LastWriteTime
+ls -la /opt/GenericAgent/.gitignore, LastWriteTime
+cd /opt/GenericAgent && git remote -v 2>&1
+echo "--- agent processes ---"
+ps aux | grep python 2>/dev/null | Where-Object { $_.CommandLine -match 'agentmain|task_runner' } 2>$null
+echo "--- memory dir stats ---"
+$memFiles = ls /opt/GenericAgent/memory\*.md 2>/dev/null
+echo "file count: $($memFiles.Count)"
 $memSizeKB = [math]::Round(($memFiles | Measure-Object Length -Sum).Sum / 1KB, 1)
-Write-Output "total size: ${memSizeKB}KB"
+echo "total size: ${memSizeKB}KB"
 
-Write-Output ""
-Write-Output "=== TODOS ==="
-Write-Output "--- recent reports ---"
-Get-ChildItem D:\GenericAgent\sandbox\reports\ -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 20 Name, LastWriteTime
-Write-Output "--- today reports ---"
+echo ""
+echo "=== TODOS ==="
+echo "--- recent reports ---"
+ls /opt/GenericAgent/sandbox/reports\ 2>/dev/null | Sort-Object LastWriteTime -Descending | Select-Object -First 20 Name, LastWriteTime
+echo "--- today reports ---"
 $todayStr = Get-Date -Format 'yyyy-MM-dd'
-Get-ChildItem D:\GenericAgent\sandbox\reports\*$todayStr* -ErrorAction SilentlyContinue | Select-Object Name
-if (-not $?) { Write-Output "(no reports dated today)" }
+ls /opt/GenericAgent/sandbox/reports\*$todayStr* 2>/dev/null | Select-Object Name
+if (-not $?) { echo "(no reports dated today)" }
 ```
 
 ### Step 2: 分析并生成简报
@@ -110,7 +110,7 @@ if (-not $?) { Write-Output "(no reports dated today)" }
 将完整简报写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\reports\daily_brief_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports\daily_brief_YYYY-MM-DD.md
 ```
 
 简报格式约束：
@@ -133,7 +133,7 @@ D:\GenericAgent\sandbox\reports\daily_brief_YYYY-MM-DD.md
 
 ```powershell
 # 检查输出文件存在且行数合理
-$reportPath = "D:\GenericAgent\sandbox\reports\daily_brief_$(Get-Date -Format 'yyyy-MM-dd').md"
+$reportPath = "/opt/GenericAgent/sandbox/reports\daily_brief_$(Get-Date -Format 'yyyy-MM-dd').md"
 (Get-Content $reportPath | Measure-Object -Line).Lines
 # 期望: 30-100 行
 
@@ -158,7 +158,7 @@ Select-String -Path $reportPath -Pattern '只读采集'
 
 | 尝试次数 | 操作 |
 |---------|------|
-| 第 1 次失败 | 检查单个命令是否因路径或权限问题报错；确认 `D:\GenericAgent\` 存在且可读；`mykey.py` 仅用 `Get-Item` 获取元数据 |
+| 第 1 次失败 | 检查单个命令是否因路径或权限问题报错；确认 `/opt/GenericAgent/` 存在且可读；`mykey.py` 仅用 `Get-Item` 获取元数据 |
 | 第 2 次失败 | 跳过失败的命令，用 `try/catch` 兜底；继续生成不完整简报，缺失分区标记为 ⚠️ UNAVAILABLE |
 | 第 3 次失败 | 请求用户介入，展示失败的具体命令和错误输出 |
 
@@ -166,15 +166,15 @@ Select-String -Path $reportPath -Pattern '只读采集'
 
 | 操作 | 确认要求 |
 |------|----------|
-| `Get-Item mykey.py` | 只读元数据（大小、时间戳），**禁止** `Get-Content` 读取内容 |
+| `ls -la mykey.py` | 只读元数据（大小、时间戳），**禁止** `Get-Content` 读取内容 |
 | `git log` / `git status` | 只读 Git 信息，不执行 commit/push/pull 等修改操作 |
-| `Get-Process` | 只读进程信息，不 kill 任何进程 |
+| `ps aux` | 只读进程信息，不 kill 任何进程 |
 
 **安全红线**：`mykey.py` 只能使用 `Get-Item` 命令，**绝对禁止**读取其内容。`env.sh` 同样只读元数据。
 
 ## 预期输出
 
-简报写入：`D:\GenericAgent\sandbox\reports\daily_brief_YYYY-MM-DD.md`
+简报写入：`/opt/GenericAgent/sandbox/reports\daily_brief_YYYY-MM-DD.md`
 
 ## 版本记录
 

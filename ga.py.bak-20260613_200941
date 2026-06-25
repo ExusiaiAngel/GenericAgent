@@ -11,68 +11,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from agent_loop import BaseHandler, StepOutcome, json_default
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-# ── Dangerous command patterns for guardrails ──
-_DANGEROUS_PATTERNS = [
-    (r'\brm\s+-rf\s+/[/\*\s]', 'rm -rf / (dangerous deletion)'),
-    (r'\brm\s+-rf\s+/\w+\s', 'rm -rf on root-level directory (dangerous)'),
-    (r'\b(?:dd|format)\s+', 'disk destroyer command'),
-    (r'\bchmod\s+777\s+/', 'chmod 777 on root'),
-    (r'>\s*/dev/(?!null)', 'writing to system device'),
-    (r'\bmkfs\.', 'filesystem formatting'),
-    (r'\bshutdown\b|\breboot\b|\bpoweroff\b', 'system shutdown'),
-    (r'\b:\(\)\s*\{', 'fork bomb'),
-    (r'\bwget\s+.*\|\s*bash\b', 'pipe-to-bash'),
-    (r'\bcurl\s+.*\|\s*bash\b', 'pipe-to-bash'),
-]
-
-
-def _check_dangerous_command(code):
-    """Check code for dangerous patterns. Returns (is_dangerous, reason)."""
-    for pat, desc in _DANGEROUS_PATTERNS:
-        if re.search(pat, code):
-            return True, desc
-    return False, ''
-
-DEFAULT_WRITE_ROOT = os.path.join(script_dir, 'sandbox')
-
-def _configured_write_roots():
-    """Return absolute directories where agent file-write tools may write."""
-    raw = os.environ.get('GENERICAGENT_WRITE_ROOTS', '')
-    roots = [DEFAULT_WRITE_ROOT]
-    if raw:
-        for item in re.split(r'[;,]' + '|' + re.escape(os.pathsep), raw):
-            item = item.strip()
-            if item:
-                roots.append(item)
-    resolved = []
-    for root in roots:
-        try:
-            resolved.append(Path(root).expanduser().resolve())
-        except OSError:
-            resolved.append(Path(root).expanduser().absolute())
-    return tuple(dict.fromkeys(resolved))
-
-def _write_allowed(path):
-    try:
-        target = Path(path).expanduser().resolve()
-    except OSError:
-        target = Path(path).expanduser().absolute()
-    for root in _configured_write_roots():
-        if target == root or root in target.parents:
-            return True
-    return False
-
-def _write_denied_result(path):
-    roots = ', '.join(str(r) for r in _configured_write_roots())
-    return {
-        "status": "error",
-        "msg": f"Write denied outside allowed roots: {path}. Allowed roots: {roots}",
-    }
-
-
 def safe_print(*args, **kwargs):
     try: print(*args, **kwargs)
-    except (BrokenPipeError, OSError): pass
+    except: pass
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000, myprint=safe_print):
     """代码执行器
@@ -85,9 +26,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
     if code_type in ["python", "py"]:
         tmp_file = tempfile.NamedTemporaryFile(suffix=".ai.py", delete=False, mode='w', encoding='utf-8', dir=code_cwd)
         cr_header = os.path.join(script_dir, 'assets', 'code_run_header.py')
-        if os.path.exists(cr_header):
-            with open(cr_header, encoding='utf-8') as hf:
-                tmp_file.write(hf.read())
+        if os.path.exists(cr_header): tmp_file.write(open(cr_header, encoding='utf-8').read())
         tmp_file.write(code)
         tmp_path = tmp_file.name
         tmp_file.close()
@@ -167,7 +106,6 @@ def ask_user(question, candidates=None):
 
 import simphtml
 driver = None
-_driver_lock = threading.Lock()
 def first_init_driver():
     global driver
     from TMWebDriver import TMWebDriver
@@ -197,8 +135,7 @@ def web_scan(tabs_only=False, switch_tab_id=None, text_only=False, maxlen=35000)
             sess.pop('type', None)
             sess['url'] = sess.get('url', '')[:50] + ("..." if len(sess.get('url', '')) > 50 else "")
             tabs.append(sess)
-        with _driver_lock:
-            if switch_tab_id: driver.default_session_id = switch_tab_id
+        if switch_tab_id: driver.default_session_id = switch_tab_id
         result = {
             "status": "success",
             "metadata": {
@@ -226,20 +163,11 @@ def log_memory_access(path):
     if 'memory' not in path: return
     stats_file = os.path.join(script_dir, 'memory/file_access_stats.json')
     try:
-        with open(stats_file, 'r', encoding='utf-8') as f:
-            stats = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        stats = {}
-    except Exception as e:
-        print(f"[WARN] log_memory_access read failed: {e}")
-        stats = {}
+        with open(stats_file, 'r', encoding='utf-8') as f: stats = json.load(f)
+    except: stats = {}
     fname = os.path.basename(path)
     stats[fname] = {'count': stats.get(fname, {}).get('count', 0) + 1, 'last': datetime.now().strftime('%Y-%m-%d')}
-    try:
-        with open(stats_file, 'w', encoding='utf-8') as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"[WARN] log_memory_access write failed: {e}")
+    with open(stats_file, 'w', encoding='utf-8') as f: json.dump(stats, f, indent=2, ensure_ascii=False)
 
 def web_execute_js(script, switch_tab_id=None, no_monitor=False):
     """执行 JS 脚本来控制浏览器，并捕获结果和页面变化"""
@@ -247,8 +175,7 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
     try:
         if driver is None: first_init_driver()
         if len(driver.get_all_sessions()) == 0: return {"status": "error", "msg": "没有可用的浏览器标签页，查L3记忆分析原因。"}
-        with _driver_lock:
-            if switch_tab_id: driver.default_session_id = switch_tab_id
+        if switch_tab_id: driver.default_session_id = switch_tab_id
         result = simphtml.execute_js_rich(script, driver, no_monitor=no_monitor)
         return result
     except Exception as e: return {"status": "error", "msg": format_error(e)}
@@ -498,7 +425,6 @@ def file_patch(path: str, old_content: str, new_content: str):
     """在文件中寻找唯一的 old_content 块并替换为 new_content"""
     path = str(Path(path).resolve())
     try:
-        if not _write_allowed(path): return _write_denied_result(path)
         if not os.path.exists(path): return {"status": "error", "msg": "文件不存在"}
         with open(path, 'r', encoding='utf-8') as f: full_text = f.read()
         if not old_content: return {"status": "error", "msg": "old_content 为空，请确认 arguments"}
@@ -591,27 +517,16 @@ class GenericAgentHandler(BaseHandler):
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
         code_type = args.get("type", "python")
-        # Normalize: bash/sh/shell → bash
-        if code_type in ('sh', 'shell', ''):
-            code_type = 'bash'
         code = args.get("code") or args.get("script")
         if not code:
             code = self._extract_code_block(response, code_type)
             if not code: return StepOutcome("[Error] Code missing. Must use reply code block or 'script' arg.", next_prompt="\n")
-        # Guardrails: check dangerous patterns (both bash and python with os/system/subprocess)
-        if code_type in ('bash', 'sh'):
-            dangerous, reason = _check_dangerous_command(code)
-            if dangerous:
-                msg = f"⛔ 危险命令拦截: {reason}\n如需执行请确认。"
-                yield msg + "\n"
-                return StepOutcome({"error": msg}, next_prompt=msg)
-        try: timeout = int(args.get("timeout", 120))
-        except: timeout = 120
+        try: timeout = int(args.get("timeout", 60))
+        except: timeout = 60
         raw_path = os.path.join(self.cwd, args.get("cwd", './'))
         cwd = os.path.normpath(os.path.abspath(raw_path))
         code_cwd = os.path.normpath(self.cwd)
-        tool_n = args.get('_tool_num', 1)
-        maxlen = max(10000 // tool_n, 3000)  # floor at 3000
+        maxlen = 10000 // args.get('_tool_num', 1)
         if code_type == 'python' and args.get("inline_eval"):
             ns = {'handler':self, 'parent':self.parent, 'history':json.dumps(self.parent.llmclient.backend.history)}
             old_cwd = os.getcwd()
@@ -663,16 +578,10 @@ class GenericAgentHandler(BaseHandler):
             content = str(result["js_return"] or '')
             abs_path = self._get_abs_path(save_to_file)
             result["js_return"] = smart_format(content, max_str_len=170)
-            if not _write_allowed(abs_path):
-                denied = _write_denied_result(abs_path)
-                result["js_return"] += f"\n\n[保存失败，{denied['msg']}]"
-            else:
-                try:
-                    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-                    with open(abs_path, 'w', encoding='utf-8') as f: f.write(str(content))
-                    result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
-                except Exception:
-                    result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
+            try:
+                with open(abs_path, 'w', encoding='utf-8') as f: f.write(str(content))
+                result["js_return"] += f"\n\n[已保存完整内容到 {abs_path}]"
+            except: result['js_return'] += f"\n\n[保存失败，无法写入文件 {abs_path}]"
         show = smart_format(json.dumps(result, ensure_ascii=False, indent=2, default=json_default), max_str_len=300)
         self.print("Web Execute JS Result:", show)
         yield f"JS 执行结果:\n{show}\n"
@@ -711,7 +620,6 @@ class GenericAgentHandler(BaseHandler):
             yield "[Error] URL is required for web_fetch.\n"
             return StepOutcome({"status": "error", "msg": "Missing url"}, next_prompt="\n")
         max_chars = min(int(args.get("max_chars", 6000)), 15000)
-        save_to_file = args.get("save_to_file", "")
         yield f"[Action] Fetching: {url[:100]}\n"
         result = web_fetch(url, max_chars=max_chars)
         if result.get("status") == "error":
@@ -720,12 +628,6 @@ class GenericAgentHandler(BaseHandler):
             return StepOutcome(result, next_prompt=next_prompt)
         content = result.get("content", "")
         yield f"[Status] ✅ Fetched {len(content)} chars from {result.get('url', url)[:60]}\n"
-        if save_to_file:
-            abs_path = self._get_abs_path(save_to_file)
-            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-            with open(abs_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            yield f"[Status] ✅ 已保存到 {abs_path}\n"
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
 
@@ -750,10 +652,6 @@ class GenericAgentHandler(BaseHandler):
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
-        if not _write_allowed(path):
-            result = _write_denied_result(path)
-            yield f"[Status] ❌ {result['msg']}\n"
-            return StepOutcome(result, next_prompt="\n")
 
         def extract_robust_content(text):
             tags = re.findall(r"<file_content[^>]*>(.*?)</file_content>", text, re.DOTALL)
@@ -769,14 +667,8 @@ class GenericAgentHandler(BaseHandler):
         try:
             new_content = expand_file_refs(content, base_dir=self.cwd)
             if mode == "prepend":
-                old = ""
-                try:
-                    with open(path, 'r', encoding="utf-8") as f:
-                        old = f.read()
-                except FileNotFoundError:
-                    pass
-                with open(path, 'w', encoding="utf-8") as f:
-                    f.write(new_content + old)
+                old = open(path, 'r', encoding="utf-8").read() if os.path.exists(path) else ""
+                open(path, 'w', encoding="utf-8").write(new_content + old)
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
@@ -943,25 +835,8 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
         import os
 
         download_dir = os.path.join(script_dir, "temp", "jmcomic", album_id)
-
-        # Check if already downloaded
-        if os.path.isdir(download_dir):
-            existing = []
-            for root, dirs, files in os.walk(download_dir):
-                for f in sorted(files):
-                    if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
-                        existing.append(os.path.join(root, f))
-            if existing:
-                n = len(existing)
-                file_refs = "\n".join(f"[FILE:{p}]" for p in existing[:50])
-                formatted = (f"✅ 漫画已在缓存中，共 {n} 张图片。\n" + file_refs)
-                if n > 50:
-                    formatted += f"\n...以及{n-50}张未列出"
-                yield formatted + "\n"
-                next_prompt = self._get_anchor_prompt(skip=args.get("_index", 0) > 0)
-                return StepOutcome(formatted, next_prompt=next_prompt)
-
         os.makedirs(download_dir, exist_ok=True)
+
         yield f"[Action] Downloading JMComic album {album_id}...\n"
 
         try:
@@ -1006,139 +881,6 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
             next_prompt = self._get_anchor_prompt(skip=args.get("_index", 0) > 0)
             return StepOutcome({"status": "error", "msg": str(e)}, next_prompt=next_prompt)
 
-
-
-
-    def do_doc_edit(self, args, response):
-        """Edit .docx/.xlsx documents. Read, create, or edit office documents."""
-        from frontends.shared.doc_ops import dispatch
-        result = dispatch(args.get("action", ""), args)
-        s = result.get("result", "")
-        if result.get("path"):
-            s += "\n[FILE:" + result["path"] + "]"
-        yield "[Doc] " + ("OK" if result["ok"] else "FAIL") + ": " + s + "\n"
-        yield s + "\n"
-        next_prompt = self._get_anchor_prompt(skip=args.get("_index", 0) > 0)
-        return StepOutcome(result, next_prompt=next_prompt if result["ok"] else ("Retry: " + result.get("result", "") + "\n" + next_prompt))
-
-
-    def do_spawn_subagent(self, args, response):
-        """Spawn a sub-agent for parallel task execution."""
-        from frontends.shared.sub_agent import spawn
-        r = spawn(args.get("task", ""), max_turns=args.get("max_turns", 30))
-        if r["ok"]:
-            yield "[SubAgent] " + r["reason"] + "\n"
-        else:
-            yield "[SubAgent] Failed: " + r.get("reason", "") + "\n"
-        next_prompt = self._get_anchor_prompt(skip=args.get("_index", 0) > 0)
-        return StepOutcome(r, next_prompt=next_prompt)
-
-    def do_list_subagents(self, args, response):
-        """List all running sub-agents and their status."""
-        from frontends.shared.sub_agent import list_subagents
-        subs = list_subagents()
-        if not subs:
-            yield "[SubAgent] 当前没有活跃的子代理。\n"
-            return StepOutcome({"subs": []}, next_prompt="\n")
-        lines = ["当前子代理:"]
-        for s in subs:
-            alive = "🟢" if s["alive"] else "🔴"
-            lines.append(f"{alive} {s['id']}: {s['status']} | turns={s['turns']} | {s['progress'][:60]}")
-        text = "\n".join(lines)
-        yield text + "\n"
-        return StepOutcome({"subs": subs}, next_prompt="\n")
-
-    def do_talk_subagent(self, args, response):
-        """Send a message to a running sub-agent."""
-        from frontends.shared.sub_agent import talk
-        r = talk(args["id"], args["message"])
-        yield "[SubAgent] " + r.get("reason", "") + "\n"
-        next_prompt = self._get_anchor_prompt(skip=args.get("_index", 0) > 0)
-        return StepOutcome(r, next_prompt=next_prompt if r["ok"] else ("Retry: " + r.get("reason", "") + "\n" + next_prompt))
-
-    def do_collect_subagent(self, args, response):
-        """Collect results from a finished sub-agent and clean it up."""
-        from frontends.shared.sub_agent import collect
-        r = collect(args["id"])
-        yield "[SubAgent] " + ("结果已收集" if r["ok"] else r.get("reason", "")) + "\n"
-        if r.get("result"):
-            yield "结果: " + r["result"][:500] + "\n"
-        return StepOutcome(r, next_prompt="\n")
-
-    def do_mcp_call(self, args, response):
-        """Call an MCP server tool. Uses subprocess to invoke mcp-cli."""
-        server = args.get("server", "")
-        tool = args.get("tool", "")
-        tool_args = args.get("args", {})
-        if not server or not tool:
-            yield "[MCP] ERROR: server and tool required.\n"
-            return StepOutcome({"error": "server and tool required"}, next_prompt="\n")
-        try:
-            import subprocess, json
-            cmd = [sys.executable, "-m", "mcp_cli", "call", server, tool, json.dumps(tool_args)]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                result = r.stdout.strip()[:2000]
-                yield f"[MCP] {server}/{tool} OK\n"
-            else:
-                result = r.stderr.strip()[:500]
-                yield f"[MCP] {server}/{tool} error: {result}\n"
-            return StepOutcome({"result": result}, next_prompt="\n")
-        except ImportError:
-            yield "[MCP] mcp_cli not installed. Install: pip install mcp-cli\n"
-            return StepOutcome({"error": "mcp_cli not installed"}, next_prompt="\n")
-        except subprocess.TimeoutExpired:
-            yield "[MCP] timeout\n"
-            return StepOutcome({"error": "timeout"}, next_prompt="\n")
-        except Exception as e:
-            yield f"[MCP] error: {e}\n"
-            return StepOutcome({"error": str(e)}, next_prompt="\n")
-
-    def do_qq_group_op(self, args, response):
-        """QQ 群管理操作：禁言/解禁/踢人/公告等。通过 NapCat WebSocket 执行。"""
-        op = args.get("op", "")
-        user_id = args.get("user_id", "")
-        group_id = args.get("group_id", "")
-        duration = args.get("duration", 600)
-        text = args.get("text", "")
-        if not op:
-            yield "[QQGroup] ERROR: op required (ban/unban/kick/notice)\n"
-            return StepOutcome({"error": "op required"}, next_prompt="\n")
-        # Map operations to NapCat API calls
-        action_map = {
-            "ban": ("set_group_ban", {"group_id": group_id, "user_id": user_id, "duration": duration}),
-            "unban": ("set_group_ban", {"group_id": group_id, "user_id": user_id, "duration": 0}),
-            "kick": ("set_group_kick", {"group_id": group_id, "user_id": user_id, "reject_add_request": False}),
-            "notice": ("_send_group_notice", {"group_id": group_id, "content": text}),
-        }
-        if op not in action_map:
-            yield f"[QQGroup] Unknown op: {op}\n"
-            return StepOutcome({"error": f"unknown op {op}"}, next_prompt="\n")
-        action, params = action_map[op]
-        try:
-            import json, asyncio, subprocess
-            # Use aiohttp to call NapCat via WebSocket (local subprocess)
-            ws_code = (
-                "import asyncio, json, aiohttp\nasync def main():\n"
-                "  async with aiohttp.ClientSession() as s:\n"
-                "    async with s.ws_connect('ws://127.0.0.1:3001/ws', timeout=5) as ws:\n"
-                f"      await ws.send_json({json.dumps({'action': action, 'params': params})})\n"
-                "      msg = await asyncio.wait_for(ws.receive(), timeout=5)\n"
-                "      if msg.type == aiohttp.WSMsgType.TEXT:\n"
-                "        print(json.loads(msg.data).get('status',''))\n"
-                "asyncio.run(main())\n"
-            )
-            r = subprocess.run([sys.executable, '-c', ws_code],
-                             capture_output=True, text=True, timeout=8)
-            result = (r.stdout.strip() or r.stderr.strip())[:200]
-            yield f"[QQGroup] {op}: {result}\n"
-            return StepOutcome({"result": result}, next_prompt="\n")
-        except subprocess.TimeoutExpired:
-            yield "[QQGroup] timeout\n"
-            return StepOutcome({"error": "timeout"}, next_prompt="\n")
-        except Exception as e:
-            yield f"[QQGroup] error: {e}\n"
-            return StepOutcome({"error": str(e)}, next_prompt="\n")
 
     def turn_end_callback(self, response, tool_calls, tool_results, turn, next_prompt, exit_reason):
         _c = re.sub(r'```.*?```|<thinking>.*?</thinking>', '', response.content, flags=re.DOTALL)

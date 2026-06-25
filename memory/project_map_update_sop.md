@@ -10,18 +10,18 @@
 ### 1. 数据采集（1 步替代多步）
 ```powershell
 # 一次性采集：顶层文件 + 子目录 + 行数
-Set-Location D:\GenericAgent
-Write-Output "=== 顶层 .py/.pyw ==="
-Get-ChildItem *.py, *.pyw | Select-Object Name
-Write-Output "=== 子目录 ==="
+Set-Location /opt/GenericAgent
+echo "=== 顶层 .py/.pyw ==="
+ls *.py, *.pyw | Select-Object Name
+echo "=== 子目录 ==="
 foreach ($d in @('memory', 'reflect', 'plugins', 'frontends', 'docs', 'assets')) {
-    Write-Output "--- $d/ ---"
-    Get-ChildItem "$d/*.py", "$d/*.md" -ErrorAction SilentlyContinue | Select-Object -First 20 Name
+    echo "--- $d/ ---"
+    Get-ChildItem "$d/*.py", "$d/*.md" 2>/dev/null | Select-Object -First 20 Name
 }
-Write-Output "=== 行数 ==="
+echo "=== 行数 ==="
 Get-Content agentmain.py, agent_loop.py, ga.py, llmcore.py, TMWebDriver.py | Measure-Object -Line
 # 检查遗漏
-Get-ChildItem *.py | ForEach-Object {
+ls *.py | ForEach-Object {
     $name = $_.Name
     $lines = (Get-Content $name | Measure-Object -Line).Lines
     if (-not (Select-String -Path memory/project_map.md -Pattern [regex]::Escape($name) -Quiet)) {
@@ -43,7 +43,7 @@ Get-ChildItem *.py | ForEach-Object {
 # 路径可用性检查
 Select-String -Path memory/project_map.md -Pattern '`[^`]+\.(py|md|pyw)`' -AllMatches | 
     ForEach-Object { $_.Matches } | ForEach-Object { $_.Value.Trim('`') } | ForEach-Object {
-    if (Test-Path "D:\GenericAgent\$_") { Write-Output "✅ $_" }
+    if (Test-Path "/opt/GenericAgent/$_") { echo "✅ $_" }
     else { Write-Warning "⚠️ $_ not found" }
 }
 ```

@@ -27,58 +27,58 @@
 将所有审计子检查合并为一个脚本执行，减少 round-trip：
 
 ```powershell
-Write-Output "=== PYTHON ==="
+echo "=== PYTHON ==="
 python --version 2>&1
 (Get-Command python).Source
-Write-Output "--- pip ---"
+echo "--- pip ---"
 pip --version 2>&1
-Write-Output "--- conda ---"
+echo "--- conda ---"
 conda --version 2>&1
-if (-not $?) { Write-Output "(not installed)" }
+if (-not $?) { echo "(not installed)" }
 
-Write-Output ""
-Write-Output "=== GIT ==="
+echo ""
+echo "=== GIT ==="
 git --version 2>&1
 git config --list --global 2>&1
-Write-Output "--- aliases ---"
+echo "--- aliases ---"
 git config --global --get-regexp alias 2>&1
 
-Write-Output ""
-Write-Output "=== SYSTEM ==="
+echo ""
+echo "=== SYSTEM ==="
 $os = Get-CimInstance Win32_OperatingSystem
-Write-Output "OS: $($os.Caption) $($os.Version)"
-Write-Output "Build: $($os.BuildNumber)"
-$cpu = Get-CimInstance Win32_Processor
-Write-Output "CPU: $($cpu.Name)"
-Write-Output "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
+echo "OS: $($os.Caption) $($os.Version)"
+echo "Build: $($os.BuildNumber)"
+$cpu = ps auxor
+echo "CPU: $($cpu.Name)"
+echo "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
 
-Write-Output ""
-Write-Output "=== DISK ==="
+echo ""
+echo "=== DISK ==="
 Get-PSDrive -PSProvider FileSystem | Where-Object Used -gt 0 | 
     Select-Object Name, @{N='Size(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,1)}},
     @{N='Used(GB)';E={[math]::Round($_.Used/1GB,1)}},
     @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}},
     @{N='Used%';E={[math]::Round($_.Used/($_.Used+$_.Free)*100,1)}}
 
-Write-Output ""
-Write-Output "=== TOOLS ==="
-Write-Output "--- node ---"
+echo ""
+echo "=== TOOLS ==="
+echo "--- node ---"
 node --version 2>&1
-if (-not $?) { Write-Output "(not installed)" }
-Write-Output "--- npm ---"
+if (-not $?) { echo "(not installed)" }
+echo "--- npm ---"
 npm --version 2>&1
-if (-not $?) { Write-Output "(not installed)" }
-Write-Output "--- docker ---"
+if (-not $?) { echo "(not installed)" }
+echo "--- docker ---"
 docker --version 2>&1
-if (-not $?) { Write-Output "(not installed)" }
-Write-Output "--- docker compose ---"
+if (-not $?) { echo "(not installed)" }
+echo "--- docker compose ---"
 docker compose version 2>&1
-if (-not $?) { Write-Output "(not installed)" }
+if (-not $?) { echo "(not installed)" }
 
-Write-Output ""
-Write-Output "=== PATH ==="
+echo ""
+echo "=== PATH ==="
 $env:Path -split ';' | Select-Object -First 30
-Write-Output "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProperty Count) total entries)"
+echo "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProperty Count) total entries)"
 ```
 
 ### Step 2: 分析并生成报告
@@ -102,7 +102,7 @@ Write-Output "... ($($env:Path -split ';' | Measure-Object | Select-Object -Expa
 将完整报告写入沙箱输出路径：
 
 ```
-D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt
+/opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt
 ```
 
 ## 成功标准
@@ -116,10 +116,10 @@ D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt
 
 ```powershell
 # 检查输出文件存在且非空
-(Get-Content D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt | Measure-Object -Line).Lines
+(Get-Content /opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt | Measure-Object -Line).Lines
 
 # 检查关键分区标题是否存在
-Select-String -Path D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt -Pattern 'PYTHON|GIT|SYSTEM|DISK|TOOLS|PATH|SUMMARY'
+Select-String -Path /opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt -Pattern 'PYTHON|GIT|SYSTEM|DISK|TOOLS|PATH|SUMMARY'
 # 期望: >= 7
 ```
 
@@ -137,7 +137,7 @@ Select-String -Path D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt 
 
 ## 预期输出
 
-报告写入：`D:\GenericAgent\sandbox\workspace\env_audit_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt`
 
 ## 版本记录
 

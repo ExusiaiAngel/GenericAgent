@@ -19,6 +19,6 @@ Mobile: adb_ui.py
 3. Encoding safety: use file_read not PS cat/type; read before modify; import memory modules directly (already in PATH, no fake prefixes)
 4. Close the loop: confirm after physical simulation; request intervention after 3 failures; complete Git workflow
 5. Processes: never kill python unconditionally (kills self), use exact PID, no os.kill for liveness check
-6. Windows: prefer win32gui title enumeration for GUI state
-7. Web JS: use native setter + event chain for input, check disabled before click, mind quote escaping; if scan empty/incomplete wait then rescan, no conclusions from first scan
-8. SOP: read SOPs not from memory, must use utils if available | complex long-running/user mentions planning -> read plan_sop
+6. Web JS: use native setter + event chain for input, check disabled before click, mind quote escaping; if scan empty/incomplete wait then rescan, no conclusions from first scan
+7. SOP: read SOPs not from memory, must use utils if available | complex long-running/user mentions planning -> read plan_sop
+8. Chat: no intermediate "processing" messages during long tasks; only reply with substantive results or when confirmation needed; lower reply frequency

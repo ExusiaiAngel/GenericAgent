@@ -24,11 +24,11 @@ A task can become a skill only when it has:
 ### Global Write Boundary
 
 - Until the user grants a narrower exception, all real project directories are read-only.
-- The only pre-approved write location is `D:\GenericAgent\sandbox`.
-- Write drafts and generated files to `D:\GenericAgent\sandbox\workspace`.
-- Receive user-provided inputs and samples in `D:\GenericAgent\sandbox\inbox`.
-- Write reports to `D:\GenericAgent\sandbox\reports`.
-- Put proposed deletion/replacement candidates in `D:\GenericAgent\sandbox\trash_review` instead of deleting originals.
+- The only pre-approved write location is `/opt/GenericAgent/sandbox`.
+- Write drafts and generated files to `/opt/GenericAgent/sandbox/workspace`.
+- Receive user-provided inputs and samples in `/opt/GenericAgent/sandbox/inbox`.
+- Write reports to `/opt/GenericAgent/sandbox/reports`.
+- Put proposed deletion/replacement candidates in `/opt/GenericAgent/sandbox/trash_review` instead of deleting originals.
 - Any modification outside the sandbox requires explicit user confirmation naming the path and action.
 
 ### 0. Personal Supervision

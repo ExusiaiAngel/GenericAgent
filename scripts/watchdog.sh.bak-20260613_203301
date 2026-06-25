@@ -1,0 +1,41 @@
+#!/bin/bash
+LOG=/opt/GenericAgent/frontends/temp/watchdog.log
+log() {
+    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    echo "$msg" >> "$LOG"
+    echo "$msg" >&2
+}
+if ! systemctl is-active --quiet genericagent-napcat; then
+    log 'NapCat frontend DOWN, restarting...'
+    systemctl restart genericagent-napcat 2>>"$LOG"
+    sleep 3
+    if systemctl is-active --quiet genericagent-napcat; then
+        log 'NapCat frontend recovered'
+    else
+        log 'NapCat frontend FAILED to restart'
+    fi
+fi
+if ! ss -tlnp 2>/dev/null | grep -q ':3001'; then
+    log 'OneBot WS :3001 not listening! QQ/NapCat may be down'
+fi
+if ! systemctl is-active --quiet genericagent; then
+    log 'Scheduler DOWN, restarting...'
+    systemctl restart genericagent 2>>"$LOG"
+    sleep 3
+    if systemctl is-active --quiet genericagent; then
+        log 'Scheduler recovered'
+    else
+        log 'Scheduler FAILED to restart'
+    fi
+fi
+LOG_FILE=/opt/GenericAgent/frontends/temp/napcat_qqapp.log
+if [ -f "$LOG_FILE" ]; then
+    CUR_TS=$(date +%s 2>/dev/null)
+    FILE_TS=$(stat -c %Y "$LOG_FILE" 2>/dev/null)
+    if [ -n "$CUR_TS" ] && [ -n "$FILE_TS" ]; then
+        AGE=$((CUR_TS - FILE_TS))
+        if [ "$AGE" -gt 600 ]; then
+            log "WARNING: napcat log stale (${AGE}s)"
+        fi
+    fi
+fi
