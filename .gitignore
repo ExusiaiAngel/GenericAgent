@@ -186,3 +186,6 @@ sandbox/
 *.db
 *.db-shm
 *.db-wal
+
+# Auto-generated stats (never track)
+memory/file_access_stats.json
