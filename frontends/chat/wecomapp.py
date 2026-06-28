@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from agentmain import GeneraticAgent
 from frontends.shared.chatapp_common import (AgentChatMixin, FILE_HINT, build_done_text, clean_reply,
                             ensure_single_instance, extract_files, public_access,
-                            redirect_log, require_runtime, split_text, strip_files)
+                            redirect_log, require_runtime, split_text, strip_files,
+                            _extract_final_answer)
 from llmcore import mykeys
 
 try:
@@ -134,12 +135,12 @@ class WeComApp(AgentChatMixin):
             print(f"[WeCom] send_media error: {e}")
             await self.send_text(chat_id, f"📎 {os.path.basename(file_path)}（发送失败: {e}）")
 
-    async def send_done(self, chat_id, raw_text):
+    async def send_done(self, chat_id, raw_text, **_):
         """Send final result: text + extracted file attachments."""
         files = extract_files(raw_text)
+        clean = _extract_final_answer(raw_text)
         if not files:
-            return await self.send_text(chat_id, build_done_text(raw_text))
-        clean = clean_reply(strip_files(raw_text))
+            return await self.send_text(chat_id, clean or "...")
         if clean and clean != "...":
             await self.send_text(chat_id, clean)
         for fp in files:

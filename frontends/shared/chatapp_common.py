@@ -54,6 +54,69 @@ RESTORE_BLOCK_RE = re.compile(
 HISTORY_RE = re.compile(r"<history>\s*(.*?)\s*</history>", re.DOTALL)
 SUMMARY_RE = re.compile(r"<summary>\s*(.*?)\s*</summary>", re.DOTALL)
 
+# ── 预编译 regex 常量（_extract_final_answer 使用） ──
+_RX_TOOL_BLOCK = re.compile(
+    "\U0001F6E0️?" + r"\s*Tool:\s*`[^`]+`\s*\U0001F4E5\s*args:\s*\n````[^`]*````\s*",
+    re.DOTALL)
+_RX_TOOL_LINE = re.compile(r"[^\S\n]*\U0001F6E0️?[^\n]*")
+_RX_BRACKET_TAG = re.compile(
+    r"^\[(?:Action|Status|Info|SubAgent|Doc|MCP|QQGroup|Warn|Stdout|omit)\].*\n?",
+    re.MULTILINE)
+_RX_XML_TAG = re.compile(
+    r"<(" + "|".join([
+        "thinking", "think", "thought", "summary", "tool_use", "tool_call",
+        "file_content", "earlier_context", "history", "key_info",
+        "reasoning", "REASONING_SCRATCHPAD", "details",
+        "antThinking", "system", "end_of_turn",
+    ]) + r")>.*?</\1>",
+    re.DOTALL | re.IGNORECASE)
+# ── 孤儿 XML 标签（配对被清后残余的 </think> 等） ──
+_RX_ORPHAN_XML = re.compile(
+    r"</?(?:think|thinking|reasoning|REASONING_SCRATCHPAD|thought|antThinking|eot|end_of_turn)[^>]*>\s*",
+    re.IGNORECASE)
+# ── [TOOL_CALL] 标记 ──
+_RX_TOOL_CALL_BLOCK = re.compile(r"\[/?TOOL_CALL\].*?\[/TOOL_CALL\]", re.DOTALL | re.IGNORECASE)
+_RX_TOOL_CALL_ORPHAN = re.compile(r"\[/?TOOL_CALL\]", re.IGNORECASE)
+# ── "Thinking..." 流式占位 ──
+_RX_THINK_PLACEHOLDER = re.compile(
+    r"(?mi)^[\t ]*Thinking\.\.\.(?:\s*\(\d+\s*s\s*elapsed\))?[\t ]*$\n?")
+# ── 独立 }} 工具调用碎片 ──
+_RX_STRAY_BRACE = re.compile(r"^\s*\}\}\s*$", re.MULTILINE)
+_RX_WORKING_MEM = re.compile(r"^### \[WORKING MEMORY\].*\n?", re.MULTILINE)
+_RX_TURN = re.compile(
+    r"\*{0,2}(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{3,}\*{0,2}"
+    r"|\[Turn \d+\].*?\.{3,}",
+    re.IGNORECASE)
+_RX_EMPTY_FENCE = re.compile(r"```+\s*\n\s*```+\s*")
+_RX_FENCE_BLOCK = re.compile(r"````+\w*[^\n]*\n(?:.*\n)*?````+", re.DOTALL)
+_RX_SEP_LINE = re.compile(r"^[`\-=*]{3,}\s*$", re.MULTILINE)
+_RX_BLANK_COLLAPSE = re.compile(r"\n{3,}")
+# ── 激进过滤（仅短对话） ──
+_RX_SYS_INFO = re.compile(
+    r"^.*?(?:PID|CPU%|MEM%|load average|uptime\s*:|Mem:|Swap:|Tasks:|Cpu\(s\):).*$",
+    re.MULTILINE)
+_RX_STDIO = re.compile(r"^.*?(?:stdout|stderr|exit_code)\s*[:=]\s*.*$", re.MULTILINE)
+_RX_LOG_NOISE = re.compile(
+    r"^.*?(?:\[Watchdog\]|\[Info\]|\[Warn\]|\[Error\]|\[DEBUG\]|\[TRACE\])\s+\d{4}-\d{2}-\d{2}.*$",
+    re.MULTILINE)
+_RX_TIMESTAMP = re.compile(r"^.*\b\d{4}-\d{2}-\d{2}_\d{4}_\w+\b.*$", re.MULTILINE)
+_RX_JSON_LINE = re.compile(r"^\s*\{.*?['\"]\w+['\"]\s*:.*\}.*$", re.MULTILINE)
+_RX_FILE_PATH = re.compile(
+    r"^.*/opt/\S+(?:/\S+){2,}.*$"
+    r"|^.*\./\S+/\S+.*$"
+    r"|^.*\[FILE:[^\]]+\].*$",
+    re.MULTILINE)
+_RX_TABLE_LINE = re.compile(r"^\|(?:.*?\|){2,}\s*$", re.MULTILINE)
+_RX_TABLE_SEP = re.compile(r"^[\|:\-=+]{3,}\s*$", re.MULTILINE)
+_RX_EQUALS_LINE = re.compile(r"^={3,}.*$", re.MULTILINE)
+_RX_SHELL_NOISE = re.compile(r"^[a-z]{2,5}[>#\$]\s.*$", re.MULTILINE)
+_RX_CMD_OUT1 = re.compile(r"^\s*\S+\s+\d+\s+[\d.]+\s+[\d.]+\s+\S+\s+\S+\s+\S+\s+.*$", re.MULTILINE)
+_RX_CMD_OUT2 = re.compile(r"^\s*\d+\s+[\d.]+\s+[\d.]+\s*.*$", re.MULTILINE)
+_RX_PS_LINE = re.compile(r"^\s*\d+\s+\S+\s+\d+:\d+:\d+\s+\S+.*$", re.MULTILINE)
+_RX_REACT_PREFIX = re.compile(
+    r"^(?:Thought|Action|Observation|Input)\s*:.*$", re.MULTILINE)
+_RX_SYSTEM_TAG = re.compile(r"^\[SYSTEM\].*$", re.MULTILINE)
+
 
 def clean_reply(text):
     for pat in TAG_PATS:
@@ -61,26 +124,47 @@ def clean_reply(text):
     return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
 
 def _extract_final_answer(text: str) -> str:
-    """聊天前端通用：清除 agent 工具调用噪音，只保留最终回复。"""
-    import re
-    E = "\U0001F6E0️?"
-    text = re.sub(
-        E + r"\s*Tool:\s*`[^`]+`\s*\U0001F4E5\s*args:\s*\n````[^`]*````\s*",
-        "", text, flags=re.DOTALL)
-    text = re.sub("[^\\S\\n]*" + E + "[^\\n]*", "", text)
-    text = re.sub(r"^\[(?:Action|Status|Info|SubAgent|Doc|MCP|QQGroup|Warn)\].*\n?", "", text, flags=re.MULTILINE)
-    text = re.sub("<thinking>.*?</thinking>", "", text, flags=re.DOTALL)
-    text = re.sub("<summary>.*?</summary>", "", text, flags=re.DOTALL)
-    text = re.sub("<tool_use>.*?</tool_use>", "", text, flags=re.DOTALL)
-    text = re.sub("<file_content>.*?</file_content>", "", text, flags=re.DOTALL)
-    text = re.sub("<earlier_context>.*?</earlier_context>", "", text, flags=re.DOTALL)
-    text = re.sub("<history>.*?</history>", "", text, flags=re.DOTALL)
-    text = re.sub("<key_info>.*?</key_info>", "", text, flags=re.DOTALL)
-    text = re.sub(r"^### \[WORKING MEMORY\].*\n?", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\*{0,2}(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{3,}\*{0,2}", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\[Turn \d+\].*?\.{3,}", "", text)
-    text = re.sub(r"```+\s*\n\s*```+\s*", "", text)
-    text = re.sub(r"^[`\-=*]{3,}\s*$", "", text, flags=re.MULTILINE)
+    """清除 agent 工具调用噪音，只保留最终回复（适用于QQ等聊天前端）。"""
+    if not text:
+        return ""
+    # Phase 1: 工具调用块
+    text = _RX_TOOL_BLOCK.sub("", text)
+    text = _RX_TOOL_LINE.sub("", text)
+    # Phase 2: 标签（配对优先，再清孤儿）
+    text = _RX_BRACKET_TAG.sub("", text)
+    text = _RX_XML_TAG.sub("", text)
+    text = _RX_ORPHAN_XML.sub("", text)
+    text = _RX_TOOL_CALL_BLOCK.sub("", text)
+    text = _RX_TOOL_CALL_ORPHAN.sub("", text)
+    # Phase 3: 状态标记 + 流式占位
+    text = _RX_WORKING_MEM.sub("", text)
+    text = _RX_TURN.sub("", text)
+    text = _RX_THINK_PLACEHOLDER.sub("", text)
+    text = _RX_STRAY_BRACE.sub("", text)
+    # Phase 4: 围栏块 + 分隔线
+    text = _RX_FENCE_BLOCK.sub("", text)
+    text = _RX_EMPTY_FENCE.sub("", text)
+    text = _RX_SEP_LINE.sub("", text)
+    # Phase 5: 行尾空格 + 折叠空白
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)
+    text = _RX_BLANK_COLLAPSE.sub("\n\n", text)
+
+    # Phase 6: 激进系统噪音清除（仅短对话，保护结构化报告）
+    lines = [l for l in text.split("\n") if l.strip()]
+    heading_count = sum(1 for l in lines if l.startswith("##"))
+    is_report = heading_count >= 2 or (len(lines) >= 20 and heading_count >= 1)
+    if not is_report:
+        for rx in (_RX_SYS_INFO, _RX_STDIO, _RX_LOG_NOISE, _RX_TIMESTAMP,
+                   _RX_JSON_LINE, _RX_FILE_PATH, _RX_TABLE_LINE,
+                   _RX_TABLE_SEP, _RX_EQUALS_LINE, _RX_SHELL_NOISE,
+                   _RX_CMD_OUT1, _RX_CMD_OUT2, _RX_PS_LINE,
+                   _RX_REACT_PREFIX, _RX_SYSTEM_TAG):
+            text = rx.sub("", text)
+    # Phase 7: 行尾整理
+    text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*{2,}", "", text)          # 先移除 **（可能产生纯空格行）
+    text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)  # 清理 ** 残留的纯空格行
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -230,6 +314,7 @@ def format_restore():
 
 
 def build_done_text(raw_text):
+    """通用：提取文件引用 + 清理 FILE 标记，不做噪音过滤（generic 直接交互用）。"""
     files = [p for p in extract_files(raw_text) if os.path.exists(p)]
     body = strip_files(clean_reply(raw_text))
     if files:
@@ -375,8 +460,7 @@ class AgentChatMixin:
                         last_ping = time.time()
                     continue
                 if "done" in item:
-                    clean_text = _extract_final_answer(item.get("done", ""))
-                    await self.send_done(chat_id, clean_text, **ctx)
+                    await self.send_done(chat_id, item.get("done", ""), **ctx)
                     break
             if not state["running"]:
                 await self.send_text(chat_id, "⏹️ 已停止", **ctx)
