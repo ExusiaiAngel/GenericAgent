@@ -1,7 +1,7 @@
 import gc
 import sys, os, re, json, time, threading, importlib
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import tempfile, traceback, subprocess, itertools, collections, difflib, shutil
 import urllib.request, urllib.parse, urllib.error, html as _html
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
@@ -9,12 +9,16 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
+from memory_policy import validate_injected_memory, validate_memory_content
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # ── Dangerous command patterns for guardrails ──
 _DANGEROUS_PATTERNS = [
-    (r'\brm\s+-rf\s+/[/\*\s]', 'rm -rf / (dangerous deletion)'),
-    (r'\brm\s+-rf\s+/\w+\s', 'rm -rf on root-level directory (dangerous)'),
+    # rm -rf 全变体（-rf / -fr / -rfv / --recursive --force 任意组合）作用于根或根级系统目录。
+    # 原规则要求 /\w+ 后有空白，`rm -rf /etc`（结尾无空格）可绕过——已补锚点。
+    (r'\brm\s+(?:-[a-z]*[rf][a-z]*[rf][a-z]*|--(?:recursive|force)(?:\s+--(?:recursive|force))?)\s+/\s*$', 'rm -rf / (dangerous deletion)'),
+    (r'\brm\s+(?:-[a-z]*[rf][a-z]*[rf][a-z]*|--(?:recursive|force)(?:\s+--(?:recursive|force))?)\s+/\*', 'rm -rf /* (dangerous deletion)'),
+    (r'\brm\s+(?:-[a-z]*[rf][a-z]*[rf][a-z]*|--(?:recursive|force)(?:\s+--(?:recursive|force))?)\s+/(?:etc|bin|sbin|usr|var|boot|lib|lib64|opt|root|home|run|dev|proc|sys|srv|mnt|media)\b', 'rm -rf on root-level system directory (dangerous)'),
     (r'\b(?:dd|format)\s+', 'disk destroyer command'),
     (r'\bchmod\s+777\s+/', 'chmod 777 on root'),
     (r'>\s*/dev/(?!null)', 'writing to system device'),
@@ -25,6 +29,32 @@ _DANGEROUS_PATTERNS = [
     (r'\bcurl\s+.*\|\s*bash\b', 'pipe-to-bash'),
 ]
 
+_ENABLED_VALUES = {"1", "true", "yes", "on"}
+_MCP_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def _env_flag_enabled(name):
+    return os.environ.get(name, "").strip().lower() in _ENABLED_VALUES
+
+
+def _mcp_tool_allowed(server, tool):
+    if not isinstance(server, str) or not isinstance(tool, str):
+        return False
+    if not _MCP_IDENTIFIER_RE.fullmatch(server) or not _MCP_IDENTIFIER_RE.fullmatch(tool):
+        return False
+    raw_allowlist = os.environ.get("GENERICAGENT_MCP_ALLOWLIST", "")
+    for entry in re.split(r"[,;\s]+", raw_allowlist.strip()):
+        if not entry or "/" not in entry:
+            continue
+        allowed_server, allowed_tool = entry.split("/", 1)
+        if not _MCP_IDENTIFIER_RE.fullmatch(allowed_server):
+            continue
+        if allowed_tool != "*" and not _MCP_IDENTIFIER_RE.fullmatch(allowed_tool):
+            continue
+        if server == allowed_server and (tool == allowed_tool or allowed_tool == "*"):
+            return True
+    return False
+
 
 def _check_dangerous_command(code):
     """Check code for dangerous patterns. Returns (is_dangerous, reason)."""
@@ -33,7 +63,106 @@ def _check_dangerous_command(code):
             return True, desc
     return False, ''
 
+
+def _sandbox_enabled():
+    """Global code_run sandbox switch.
+
+    GENERICAGENT_SANDBOX=0 disables bubblewrap for every code_run call
+    (host execution everywhere). Per-call ``mode: "host"`` still works and
+    is audited regardless of this switch.
+    """
+    return os.environ.get("GENERICAGENT_SANDBOX", "1").lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def _audit_admin_op(code, source):
+    """Append an audit trail for unsandboxed (host-mode) code_run executions."""
+    try:
+        os.makedirs(os.path.join(script_dir, "temp"), exist_ok=True)
+        with open(
+            os.path.join(script_dir, "temp", "admin_ops.log"),
+            "a", encoding="utf-8",
+        ) as f:
+            f.write(
+                f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] '
+                f'source={source} cmd={code[:800]}\n'
+            )
+    except Exception:
+        pass
+
 DEFAULT_WRITE_ROOT = os.path.join(script_dir, 'sandbox')
+DEFAULT_EXECUTION_ROOT = os.path.join(script_dir, 'temp')
+DEFAULT_IPC_PRIVATE_ROOT = "/run/genericagent"
+_CODE_READ_DIR_NAMES = (
+    "assets", "docs", "frontends", "memory", "reflect", "sche_tasks",
+    "scripts", "tests",
+)
+_CODE_READ_FILE_NAMES = (
+    "agent_loop.py", "agentmain.py", "change_approval.py", "ga.py",
+)
+_PRIVATE_KEY_NAMES = {
+    "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "id_xmss",
+}
+_PRIVATE_KEY_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
+
+
+def _resolved_path(path):
+    try:
+        return Path(path).expanduser().resolve()
+    except OSError:
+        return Path(path).expanduser().absolute()
+
+
+def _path_within(path, root):
+    return path == root or root in path.parents
+
+
+def _configured_private_roots():
+    from change_approval import get_change_state_root
+    return tuple(dict.fromkeys((
+        get_change_state_root(),
+        _resolved_path(
+            os.environ.get("GENERICAGENT_IPC_PRIVATE_ROOT", "").strip()
+            or DEFAULT_IPC_PRIVATE_ROOT
+        ),
+    )))
+
+
+def _private_runtime_path(path):
+    target = _resolved_path(path)
+    return any(_path_within(target, root) for root in _configured_private_roots())
+
+
+def _sensitive_path(path):
+    """Match path-name based secrets without opening or inspecting content."""
+    target = _resolved_path(path)
+    name = target.name.lower()
+    return (
+        ".ssh" in {part.lower() for part in target.parts}
+        or name in _PRIVATE_KEY_NAMES
+        or name in {"mykey.py", "mykey.json", "authorized_keys"}
+        or name.startswith(".env")
+        or target.suffix.lower() in _PRIVATE_KEY_SUFFIXES
+    )
+
+
+def _read_allowed(path):
+    """Fail closed for server-private, OS-private, and secret-bearing paths."""
+    target = _resolved_path(path)
+    if _private_runtime_path(target):
+        return False
+    if os.name != "nt":
+        for root in (Path("/proc"), Path("/sys"), Path("/dev")):
+            if _path_within(target, root):
+                return False
+    if _sensitive_path(target):
+        return False
+    return True
+
+
+def _read_denied_result(path):
+    return {"status": "error", "msg": f"Read denied by private-path policy: {path}"}
 
 def _configured_write_roots():
     """Return absolute directories where agent file-write tools may write."""
@@ -53,14 +182,248 @@ def _configured_write_roots():
     return tuple(dict.fromkeys(resolved))
 
 def _write_allowed(path):
-    try:
-        target = Path(path).expanduser().resolve()
-    except OSError:
-        target = Path(path).expanduser().absolute()
+    target = _resolved_path(path)
+    if not _read_allowed(target):
+        return False
     for root in _configured_write_roots():
         if target == root or root in target.parents:
             return True
     return False
+
+
+def _execution_mount_root_allowed(path):
+    """Reject broad or OS-private roots even if configuration names them."""
+    target = _resolved_path(path)
+    if target.parent == target or target == _resolved_path(script_dir):
+        return False
+    if os.name != "nt":
+        for private_root in (Path("/etc"), Path("/root"), Path("/run")):
+            if _path_within(target, private_root):
+                return False
+    return not _private_runtime_path(target) and not _sensitive_path(target)
+
+
+def _ephemeral_execution_root(path):
+    """Recognize a process-owned private subtree below the system temp dir."""
+    target = _resolved_path(path)
+    temp_root = _resolved_path(tempfile.gettempdir())
+    if target == temp_root or not _path_within(target, temp_root):
+        return False
+    try:
+        relative = target.relative_to(temp_root)
+        private_root = temp_root / relative.parts[0]
+        if private_root.is_symlink() or not private_root.is_dir():
+            return False
+        if os.name != "nt":
+            info = private_root.stat()
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                return False
+    except (IndexError, OSError, ValueError):
+        return False
+    return True
+
+
+def _execution_root_allowed(path):
+    """Allow code only in configured, agent-temp, or private ephemeral trees."""
+    target = _resolved_path(path)
+    if (
+        not target.is_dir()
+        or not _read_allowed(target)
+        or not _execution_mount_root_allowed(target)
+    ):
+        return False
+    if any(
+        _execution_mount_root_allowed(root) and _path_within(target, root)
+        for root in _configured_write_roots()
+    ):
+        return True
+    return (
+        _path_within(target, _resolved_path(DEFAULT_EXECUTION_ROOT))
+        or _ephemeral_execution_root(target)
+    )
+
+
+def _configured_code_read_roots():
+    """Return curated application trees for read-only code_run mounts."""
+    project = _resolved_path(script_dir)
+    roots = []
+    for name in _CODE_READ_DIR_NAMES:
+        candidate = _resolved_path(project / name)
+        if (
+            candidate.is_dir()
+            and _path_within(candidate, project)
+            and candidate != project
+            and _execution_mount_root_allowed(candidate)
+            and _read_allowed(candidate)
+        ):
+            roots.append(candidate)
+    return tuple(dict.fromkeys(roots))
+
+
+def _configured_code_read_files():
+    """Expose selected top-level source files without mounting project root."""
+    project = _resolved_path(script_dir)
+    files = []
+    for name in _CODE_READ_FILE_NAMES:
+        candidate = _resolved_path(project / name)
+        if (
+            candidate.is_file()
+            and not candidate.is_symlink()
+            and candidate.parent == project
+            and _read_allowed(candidate)
+        ):
+            files.append(candidate)
+    return tuple(dict.fromkeys(files))
+
+
+def _resolve_code_run_cwd(handler_cwd, requested_cwd):
+    """Resolve a model-supplied relative cwd without allowing root escape."""
+    if requested_cwd is None:
+        requested_cwd = "./"
+    if not isinstance(requested_cwd, str) or not requested_cwd.strip():
+        raise ValueError("code_run cwd must be a non-empty relative path")
+    requested = Path(requested_cwd)
+    if requested.is_absolute() or PureWindowsPath(requested_cwd).is_absolute():
+        raise ValueError("code_run cwd must be relative to the trusted workspace")
+
+    trusted_root = _resolved_path(handler_cwd)
+    if not _execution_root_allowed(trusted_root):
+        raise PermissionError("code_run handler workspace is not an allowed execution root")
+    target = _resolved_path(trusted_root / requested)
+    if not _path_within(target, trusted_root):
+        raise PermissionError("code_run cwd escapes the trusted workspace")
+    if not target.is_dir() or not _read_allowed(target):
+        raise PermissionError("code_run cwd is not an allowed workspace directory")
+    return trusted_root, target
+
+
+def _configured_memory_root():
+    """Return the explicitly enabled content-memory root, if any."""
+    raw = os.environ.get('GENERICAGENT_MEMORY_ROOT', '').strip()
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser().resolve()
+    except OSError:
+        return Path(raw).expanduser().absolute()
+
+
+def _memory_content_allowed(path):
+    """Allow only top-level Markdown plus the L1/L2 text stores.
+
+    Memory Python, JSON, backups, nested directories, and symlink escapes are
+    intentionally excluded.  This is a narrower capability than a normal
+    write root and is used only by file_patch / create-only file_write.
+    """
+    root = _configured_memory_root()
+    if root is None:
+        return False
+    try:
+        target = Path(path).expanduser().resolve()
+    except OSError:
+        target = Path(path).expanduser().absolute()
+    if target.parent != root:
+        return False
+    return target.suffix.lower() == '.md' or target.name in {
+        'global_mem.txt',
+        'global_mem_insight.txt',
+    }
+
+
+def _memory_patch_allowed(path):
+    return _memory_content_allowed(path) and Path(path).is_file()
+
+
+def _memory_create_allowed(path):
+    target = Path(path)
+    return (
+        _memory_content_allowed(path)
+        and target.suffix.lower() == '.md'
+        and not target.exists()
+    )
+
+
+_MEMORY_SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE),
+    re.compile(r"\b(?:api[_-]?key|access[_-]?token|password|passwd|secret)\s*[:=]\s*[^\s#]{8,}", re.IGNORECASE),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
+)
+_MEMORY_VOLATILE_PATTERNS = (
+    re.compile(r"(?:验证时间|记录时间|更新时间|当前时间|timestamp)\s*[:：=]\s*\d{4}-\d{2}-\d{2}", re.IGNORECASE),
+    re.compile(r"(?:pid|进程号|session[_ -]?id|会话ID)\s*[:：=]\s*[A-Za-z0-9_-]+", re.IGNORECASE),
+)
+
+
+def _contains_sensitive_memory(content):
+    text = str(content or "")
+    return any(pattern.search(text) for pattern in _MEMORY_SECRET_PATTERNS)
+
+
+def _memory_rejection_reason(content):
+    if _contains_sensitive_memory(content):
+        return "secret-like content detected"
+    text = str(content or "")
+    if any(pattern.search(text) for pattern in _MEMORY_VOLATILE_PATTERNS):
+        return "volatile timestamp, PID, or session identifier detected"
+    return ""
+
+
+_CODE_RUN_WRITE_DENIAL_RE = re.compile(
+    r"read-only file system|permission denied|write denied outside allowed roots",
+    re.IGNORECASE,
+)
+_CODE_RUN_MEMORY_REFERENCE_RE = re.compile(
+    r"(?:\bMEMORY(?:_DIR|_ROOT)?\b|(?:^|[./\\'\"])memory[/\\'\"])",
+    re.IGNORECASE,
+)
+
+
+def _code_run_memory_recovery_hint(code, result):
+    """Explain the controlled memory route after a sandbox write refusal."""
+    if not isinstance(result, dict) or result.get("status") != "error":
+        return ""
+    output = "\n".join(
+        str(result.get(key, "")) for key in ("stdout", "stderr", "msg")
+    )
+    if not _CODE_RUN_WRITE_DENIAL_RE.search(output):
+        return ""
+    if not _CODE_RUN_MEMORY_REFERENCE_RE.search(str(code or "")):
+        return ""
+    return (
+        "code_run 的只读错误只代表代码执行沙箱拒绝该写入，不能说明整个记忆系统只读。"
+        "若用户当前消息已明确批准准确的记忆修改：先用 file_read 读取；已有顶层 memory .md "
+        "或 L1/L2 文本改用 file_patch，新建顶层 .md 改用 file_write。"
+        "删除/移动、覆盖或追加已有记忆、.py/JSON/备份/L4/嵌套路径仍受保护；"
+        "这类操作应准确报告为需要管理员处理，不要泛化为所有记忆都不可写。"
+    )
+
+
+def _atomic_memory_write(path, content):
+    """Replace one memory text file atomically while preserving its mode."""
+    target = Path(path)
+    mode = target.stat().st_mode & 0o777
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(target.parent),
+            prefix=f".{target.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            temp_name = handle.name
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, mode)
+        os.replace(temp_name, target)
+        temp_name = None
+    finally:
+        if temp_name:
+            try: os.unlink(temp_name)
+            except FileNotFoundError: pass
+
+
+def _audit_memory_write(action, path):
+    print(f"[MEMORY-AUDIT] action={action} path={Path(path).name}")
+
 
 def _write_denied_result(path):
     roots = ', '.join(str(r) for r in _configured_write_roots())
@@ -70,11 +433,208 @@ def _write_denied_result(path):
     }
 
 
+def _known_sensitive_mounts(*roots):
+    """Enumerate sensitive path names recursively without reading file content."""
+    masked_directories = []
+    masked_files = []
+    skip_directories = {
+        "venv", ".venv", "node_modules", "__pycache__", ".tox", ".nox",
+    }
+    pending = list(dict.fromkeys(_resolved_path(item) for item in roots))
+    visited = set()
+    while pending:
+        directory = pending.pop()
+        if directory in visited:
+            continue
+        visited.add(directory)
+        try:
+            children = tuple(directory.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            name = child.name.lower()
+            try:
+                is_link = child.is_symlink()
+                is_directory = child.is_dir() and not is_link
+            except OSError:
+                continue
+            if is_directory:
+                resolved = child.resolve()
+                if (
+                    name in {".ssh", ".git"}
+                    or _private_runtime_path(resolved)
+                ):
+                    masked_directories.append(resolved)
+                elif name not in skip_directories:
+                    pending.append(resolved)
+            elif _sensitive_path(child):
+                masked_files.append(child.resolve())
+    return (
+        tuple(dict.fromkeys(masked_directories)),
+        tuple(dict.fromkeys(masked_files)),
+    )
+
+
+def _known_sensitive_files(*roots):
+    """Compatibility helper returning recursively discovered sensitive files."""
+    return _known_sensitive_mounts(*roots)[1]
+
+
+def _bubblewrap_argv(cmd, cwd, *, trusted_execution_root=None):
+    bwrap = os.environ.get("GENERICAGENT_BWRAP") or shutil.which("bwrap")
+    if not bwrap:
+        raise RuntimeError("bubblewrap is required for code_run")
+
+    cwd_path = _resolved_path(cwd)
+    args = [
+        bwrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-net",
+        "--cap-drop", "ALL",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--tmpfs", "/run",
+    ]
+    if Path("/sys").is_dir():
+        args.extend(["--tmpfs", "/sys"])
+
+    write_roots = _configured_write_roots()
+    for root in write_roots:
+        if not _execution_mount_root_allowed(root):
+            raise RuntimeError(f"unsafe code_run write root: {root}")
+        root.mkdir(parents=True, exist_ok=True)
+
+    execution_root = None
+    if trusted_execution_root is not None:
+        execution_root = _resolved_path(trusted_execution_root)
+        if not _execution_root_allowed(execution_root):
+            raise RuntimeError("code_run trusted execution root is not allowed")
+        if not _path_within(cwd_path, execution_root):
+            raise RuntimeError("code_run cwd escapes the trusted execution root")
+    elif _execution_root_allowed(cwd_path):
+        execution_root = cwd_path
+    else:
+        raise RuntimeError("code_run cwd is not an allowed execution root")
+    if not cwd_path.is_dir() or not _read_allowed(cwd_path):
+        raise RuntimeError("code_run cwd is not an allowed workspace directory")
+
+    application_read_roots = _configured_code_read_roots()
+    application_read_files = _configured_code_read_files()
+    system_read_roots = []
+    for raw in ("/usr", "/bin", "/sbin", "/lib", "/lib64"):
+        path = Path(raw)
+        if path.is_dir():
+            system_read_roots.append(path)
+    for raw in (
+        sys.base_prefix,
+        sys.prefix,
+    ):
+        if not raw:
+            continue
+        path = _resolved_path(raw)
+        if path.is_dir() and path.parent != path:
+            system_read_roots.append(path)
+    for root in dict.fromkeys(system_read_roots):
+        args.extend(["--ro-bind", str(root), str(root)])
+    for root in application_read_roots:
+        args.extend(["--ro-bind", str(root), str(root)])
+    for path in application_read_files:
+        args.extend(["--ro-bind", str(path), str(path)])
+
+    safe_etc_paths = (
+        Path("/etc/ld.so.cache"),
+        Path("/etc/localtime"),
+        Path("/etc/passwd"),
+        Path("/etc/group"),
+        Path("/etc/nsswitch.conf"),
+        Path("/etc/ssl/certs"),
+        Path("/etc/alternatives"),
+    )
+    for safe_path in safe_etc_paths:
+        if safe_path.exists():
+            args.extend(["--ro-bind", str(safe_path), str(safe_path)])
+
+    if execution_root is not None:
+        args.extend(["--ro-bind", str(execution_root), str(execution_root)])
+
+    mounted_write_roots = tuple(dict.fromkeys(write_roots))
+    for root in mounted_write_roots:
+        resolved = str(root)
+        args.extend(["--bind", resolved, resolved])
+
+    sensitive_directories, sensitive_files = _known_sensitive_mounts(
+        *application_read_roots,
+        *mounted_write_roots,
+        *((execution_root,) if execution_root is not None else ()),
+    )
+    for sensitive_directory in sensitive_directories:
+        args.extend(["--tmpfs", str(sensitive_directory)])
+    for sensitive_path in sensitive_files:
+        args.extend(["--ro-bind", "/dev/null", str(sensitive_path)])
+    args.extend(["--chdir", str(cwd_path), "--"])
+    args.extend(cmd)
+    return args
+
+
+def _code_run_child_env(sandboxed=True):
+    """Build a minimal execution environment without inheriting credentials.
+
+    Sandboxed runs get a curated allowlist; host-mode runs (server admin)
+    inherit the full environment so tools like git/curl/systemctl work.
+    """
+    if not sandboxed:
+        child_env = dict(os.environ)
+        child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+        return child_env
+    allowed = (
+        "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES",
+        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP",
+    )
+    child_env = {
+        key: os.environ[key]
+        for key in allowed
+        if os.environ.get(key)
+    }
+    venv = os.environ.get("VIRTUAL_ENV") or os.path.join(script_dir, "venv")
+    venv_bin = os.path.join(venv, "Scripts" if os.name == "nt" else "bin")
+    child_env["PATH"] = venv_bin + os.pathsep + os.environ.get("PATH", "")
+    child_env["VIRTUAL_ENV"] = venv
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return child_env
+
+
 def safe_print(*args, **kwargs):
     try: print(*args, **kwargs)
     except (BrokenPipeError, OSError): pass
 
-def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000, myprint=safe_print):
+
+_SHELL_COMMAND_START = re.compile(
+    r"^(?:cd|ls|find|grep|echo|printf|cat|pwd|mount|df|du|ps|git|sed|awk|"
+    r"head|tail|test|mkdir|cp|mv|rm|chmod|chown|curl|wget|bash|sh)\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_code_type(code, explicit_type=None):
+    """Infer an omitted code_run type while honoring every explicit choice."""
+    if explicit_type is not None and str(explicit_type).strip():
+        normalized = str(explicit_type).strip().lower()
+        return "bash" if normalized in ("sh", "shell") else normalized
+    text = str(code or "").lstrip()
+    first_line = text.splitlines()[0].strip() if text else ""
+    if first_line.startswith("#!") and any(
+        shell in first_line.lower() for shell in ("/sh", "/bash", "/zsh")
+    ):
+        return "bash"
+    if _SHELL_COMMAND_START.match(first_line) or "&&" in first_line:
+        return "bash"
+    return "python"
+
+def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=None, maxlen=10000, myprint=safe_print, trusted_execution_root=None, sandboxed=True):
     """代码执行器
     python: 运行复杂的 .py 脚本（文件模式）
     powershell/bash: 运行单行指令（命令模式）
@@ -97,7 +657,7 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
             _ps = "pwsh" if shutil.which("pwsh") else "powershell"
             utf8_prefix = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
             cmd = [_ps, "-NoProfile", "-NonInteractive", "-Command", utf8_prefix + code]
-        else: cmd = ["bash", "-c", code]
+        else: cmd = ["bash", "-o", "pipefail", "-c", code]
     else:
         return {"status": "error", "msg": f"不支持的类型: {code_type}"}
     myprint("code run output:")
@@ -107,6 +667,11 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startupinfo.wShowWindow = 0 # SW_HIDE
     full_stdout = []
+    child_env = _code_run_child_env(sandboxed=sandboxed)
+    if os.name != "nt" and sandboxed:
+        cmd = _bubblewrap_argv(
+            cmd, cwd, trusted_execution_root=trusted_execution_root,
+        )
 
     def stream_reader(proc, logs):
         try:
@@ -115,13 +680,15 @@ def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop
                 except UnicodeDecodeError: line = line_bytes.decode('gbk', errors='ignore')
                 logs.append(line)
                 myprint(line, end="")
-        except: pass
+        except Exception as e:
+            myprint(f"\n[WARN] stream_reader error: {e}")
 
     try:
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             bufsize=0, cwd=cwd, startupinfo=startupinfo,
-            creationflags=0x08000000 if os.name == 'nt' else 0
+            creationflags=0x08000000 if os.name == 'nt' else 0,
+            env=child_env,
         )
         start_t = time.time()
         t = threading.Thread(target=stream_reader, args=(process, full_stdout), daemon=True)
@@ -262,19 +829,43 @@ def web_search(query, max_results=8):
         'Accept-Language': 'en-US,en;q=0.9',
     }
     last_error = None
+    backends_tried = []
+    collected = []
+    deadline = time.monotonic() + 45
+
+    def accept_rows(backend_name, rows):
+        backends_tried.append(backend_name)
+        for row in rows or []:
+            collected.append(dict(row, backend=backend_name))
+        return _select_relevant_results(query, collected, max_results)
 
     # Try curl_cffi first (Chrome TLS fingerprint — bypasses most bot detection)
     try:
         from curl_cffi import requests as creq
         for backend_name, url_tpl, parse_func in _SEARCH_BACKENDS:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
                 url = url_tpl.format(q)
-                resp = creq.get(url, headers=headers, impersonate="chrome120", timeout=15)
+                resp = creq.get(
+                    url,
+                    headers=headers,
+                    impersonate="chrome120",
+                    timeout=max(1, min(10, remaining)),
+                )
                 if _is_blocked(resp.text):
                     continue
-                results = parse_func(resp.text, q, max_results)
+                results = accept_rows(
+                    backend_name,
+                    parse_func(resp.text, query, max_results * 2),
+                )
                 if results:
-                    return {"status": "success", "results": results, "backend": backend_name, "query": query}
+                    return {
+                        "status": "success", "results": results,
+                        "backend": backend_name, "backends_tried": backends_tried,
+                        "query": query,
+                    }
             except Exception as e:
                 last_error = str(e)
                 continue
@@ -283,16 +874,26 @@ def web_search(query, max_results=8):
 
     # Fallback: urllib (works through proxy, but search engines may block)
     for backend_name, url_tpl, parse_func in _SEARCH_BACKENDS:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             url = url_tpl.format(q)
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=max(1, min(10, remaining))) as resp:
                 raw = resp.read().decode('utf-8', errors='replace')
             if _is_blocked(raw):
                 continue
-            results = parse_func(raw, q, max_results)
+            results = accept_rows(
+                backend_name,
+                parse_func(raw, query, max_results * 2),
+            )
             if results:
-                return {"status": "success", "results": results, "backend": backend_name, "query": query}
+                return {
+                    "status": "success", "results": results,
+                    "backend": backend_name, "backends_tried": backends_tried,
+                    "query": query,
+                }
         except Exception as e:
             last_error = str(e)
             continue
@@ -300,9 +901,10 @@ def web_search(query, max_results=8):
     # All backends failed
     return {
         "status": "error",
-        "msg": f"All search backends blocked or unavailable. Last error: {last_error or 'captcha/blocked'}. "
-               "Use code_run(powershell) with Invoke-WebRequest or curl as fallback for web search.",
-        "query": query
+        "msg": "Search backends returned no query-relevant results. "
+               f"Last error: {last_error or 'blocked, empty, or irrelevant'}.",
+        "query": query,
+        "backends_tried": backends_tried,
     }
 
 
@@ -373,19 +975,84 @@ def _parse_bing(html, query, max_results):
         if len(results) >= max_results:
             break
         block_html = block.group(1)
-        link_m = re.search(r'<a[^>]*?href="(https?://[^"]+)"[^>]*?>(.+?)</a>', block_html, re.DOTALL)
+        link_m = re.search(
+            r'<h2[^>]*>\s*<a[^>]*?href="(https?://[^"]+)"[^>]*?>(.*?)</a>\s*</h2>',
+            block_html,
+            re.DOTALL,
+        )
         if not link_m:
             continue
         url = link_m.group(1)
         title = re.sub(r'<[^>]+>', '', link_m.group(2)).strip()
         title = _html.unescape(title)
         # Bing snippet is in <p> or <div class="b_caption">
-        snip_m = re.search(r'<(?:p|div\s+class="b_caption"[^>]*?)>(.{10,300}?)</(?:p|div)>', block_html, re.DOTALL)
+        caption_m = re.search(
+            r'<div\s+class="b_caption"[^>]*>(.*?)</div>',
+            block_html,
+            re.DOTALL,
+        )
+        caption = caption_m.group(1) if caption_m else block_html
+        snip_m = re.search(r'<p[^>]*>(.{10,500}?)</p>', caption, re.DOTALL)
         snippet = re.sub(r'<[^>]+>', '', snip_m.group(1)).strip() if snip_m else ""
         snippet = _html.unescape(snippet)
         if title and url:
             results.append({"title": title, "url": url, "snippet": snippet})
     return results
+
+
+_SEARCH_STOPWORDS = {
+    "a", "an", "and", "the", "for", "of", "to", "on", "in",
+    "new", "game", "latest", "news", "announcement", "official",
+    "documentation", "消息", "最新", "有关", "总结", "新作",
+}
+_ACTION_MARKERS = (
+    "new", "news", "latest", "announce",
+    "project", "release", "upcoming", "新作", "新游戏", "新项目", "公布",
+    "发布", "发售", "発売", "最新", "消息",
+)
+
+
+def _query_terms(query):
+    lowered = (query or "").lower()
+    latin = re.findall(r"[a-z0-9]{2,}", lowered)
+    chinese = re.findall(r"[\u4e00-\u9fff]{2,}", lowered)
+    return [
+        term for term in latin + chinese
+        if term not in _SEARCH_STOPWORDS and not re.fullmatch(r"20\d{2}", term)
+    ]
+
+
+def _relevance_score(query, row):
+    title = str(row.get("title", "")).lower()
+    haystack = " ".join([
+        title,
+        str(row.get("snippet", "")),
+        str(row.get("url", "")),
+    ]).lower()
+    query_lower = (query or "").lower()
+    action_intent = any(marker in query_lower for marker in (
+        "new", "latest", "announcement", "新作", "最新",
+    ))
+    if action_intent and not any(marker in haystack for marker in _ACTION_MARKERS):
+        return 0
+    terms = _query_terms(query)
+    return sum(3 if term in title else 1 for term in terms if term in haystack)
+
+
+def _select_relevant_results(query, rows, max_results):
+    deduped = {}
+    for row in rows:
+        url = str(row.get("url", "")).split("#", 1)[0]
+        score = _relevance_score(query, row)
+        if not url or score <= 0:
+            continue
+        candidate = dict(row, url=url, relevance=score)
+        if url not in deduped or score > deduped[url]["relevance"]:
+            deduped[url] = candidate
+    return sorted(
+        deduped.values(),
+        key=lambda row: (-row["relevance"], row["url"]),
+    )[:max_results]
 
 
 def _parse_google(html, query, max_results):
@@ -488,25 +1155,39 @@ def expand_file_refs(text, base_dir=None):
     def replacer(match):
         path, start, end = match.group(1), int(match.group(2)), int(match.group(3))
         path = os.path.abspath(os.path.join(base_dir or '.', path))
+        if not _read_allowed(path):
+            raise ValueError(_read_denied_result(path)["msg"])
         if not os.path.isfile(path): raise ValueError(f"引用文件不存在: {path}")
         with open(path, 'r', encoding='utf-8') as f: lines = f.readlines()
         if start < 1 or end > len(lines) or start > end: raise ValueError(f"行号越界: {path} 共{len(lines)}行, 请求{start}-{end}")
         return ''.join(lines[start-1:end])
     return re.sub(pattern, replacer, text)
     
-def file_patch(path: str, old_content: str, new_content: str):
+def file_patch(path: str, old_content: str, new_content: str, automatic=False):
     """在文件中寻找唯一的 old_content 块并替换为 new_content"""
     path = str(Path(path).resolve())
     try:
-        if not _write_allowed(path): return _write_denied_result(path)
+        if not (_write_allowed(path) or _memory_patch_allowed(path)):
+            return _write_denied_result(path)
         if not os.path.exists(path): return {"status": "error", "msg": "文件不存在"}
         with open(path, 'r', encoding='utf-8') as f: full_text = f.read()
         if not old_content: return {"status": "error", "msg": "old_content 为空，请确认 arguments"}
         count = full_text.count(old_content)
         if count == 0: return {"status": "error", "msg": "未找到匹配的旧文本块，建议：先用 file_read 确认当前内容，再分小段进行 patch。若多次失败则询问用户，严禁自行使用 overwrite 或代码替换。"}
         if count > 1: return {"status": "error", "msg": f"找到 {count} 处匹配，无法确定唯一位置。请提供更长、更具体的旧文本块以确保唯一性。建议：包含上下文行来增强特征，或分小段逐个修改。"}
+        rejection = _memory_rejection_reason(new_content) if _memory_content_allowed(path) else ""
+        if rejection:
+            return {"status": "error", "msg": f"Memory update rejected: {rejection}"}
         updated_text = full_text.replace(old_content, new_content)
-        with open(path, 'w', encoding='utf-8') as f: f.write(updated_text)
+        if _memory_content_allowed(path):
+            validate_memory_content(
+                path, updated_text, previous_content=full_text,
+                automatic=bool(automatic),
+            )
+            _atomic_memory_write(path, updated_text)
+            _audit_memory_write("patch", path)
+        else:
+            with open(path, 'w', encoding='utf-8') as f: f.write(updated_text)
         return {"status": "success", "msg": "文件局部修改成功"}
     except Exception as e: return {"status": "error", "msg": str(e)}
 
@@ -570,14 +1251,22 @@ def consume_file(dr, file):
 
 class GenericAgentHandler(BaseHandler):
     '''Generic Agent 工具库，包含多种工具的实现。工具函数自动加上了 do_ 前缀。实际工具名没有前缀。'''
-    def __init__(self, parent, last_history=None, cwd='./temp'):
+    def __init__(self, parent, last_history=None, cwd='./temp', allow_inline_eval=True,
+                 memory_only=False):
         self.parent = parent
         self.working = {}
         self.cwd = cwd;  self.current_turn = 0
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
         self._done_hooks = []
+        self.allow_inline_eval = bool(allow_inline_eval)
+        self.memory_only = bool(memory_only)
         self.print = safe_print
+
+    def _get_tool_maxlen(self, length, args, growth_rate=1.0):
+        get_multiplier = getattr(self.parent, 'get_ctx_multiplier', lambda: 1.0)
+        multiplier = 1 + (get_multiplier() - 1) * growth_rate
+        return int(length * multiplier / args.get('_tool_num', 1))
 
     def _get_abs_path(self, path):
         if not path: return ""
@@ -590,14 +1279,41 @@ class GenericAgentHandler(BaseHandler):
 
     def do_code_run(self, args, response):
         '''执行代码片段，有长度限制，不允许代码中放大量数据，如有需要应当通过文件读取进行。'''
-        code_type = args.get("type", "python")
-        # Normalize: bash/sh/shell → bash
-        if code_type in ('sh', 'shell', ''):
-            code_type = 'bash'
         code = args.get("code") or args.get("script")
+        code_type = _infer_code_type(code, args.get("type"))
         if not code:
             code = self._extract_code_block(response, code_type)
             if not code: return StepOutcome("[Error] Code missing. Must use reply code block or 'script' arg.", next_prompt="\n")
+        if args.get("inline_eval") and not self.allow_inline_eval:
+            denied = {
+                "status": "error",
+                "msg": "inline_eval is disabled for remote chat requests",
+            }
+            yield f"[Status] ❌ {denied['msg']}\n"
+            return StepOutcome(denied, next_prompt="\n")
+        # Host mode: unsandboxed server administration. Bash only so the
+        # dangerous-command guardrail below always applies; python stays in
+        # the sandbox (its os/system calls would bypass the bash checks).
+        sandboxed = _sandbox_enabled()
+        mode = str(args.get("mode") or "").lower()
+        if mode == "host":
+            if code_type not in ("bash", "sh", "shell"):
+                denied = {
+                    "status": "error",
+                    "msg": "host 模式仅支持 bash/sh；python 请用默认沙箱模式",
+                }
+                yield f"[Status] ❌ {denied['msg']}\n"
+                return StepOutcome(denied, next_prompt="\n")
+            sandboxed = False
+            chat_id = str((self.parent.active_task or {}).get("chat_id") or "?")
+            _audit_admin_op(code[:800], f"chat:{chat_id}")
+        elif mode not in ("", "sandbox"):
+            denied = {
+                "status": "error",
+                "msg": f"未知 mode: {mode}（可选 sandbox/host）",
+            }
+            yield f"[Status] ❌ {denied['msg']}\n"
+            return StepOutcome(denied, next_prompt="\n")
         # Guardrails: check dangerous patterns (both bash and python with os/system/subprocess)
         if code_type in ('bash', 'sh'):
             dangerous, reason = _check_dangerous_command(code)
@@ -606,12 +1322,18 @@ class GenericAgentHandler(BaseHandler):
                 yield msg + "\n"
                 return StepOutcome({"error": msg}, next_prompt=msg)
         try: timeout = int(args.get("timeout", 120))
-        except: timeout = 120
-        raw_path = os.path.join(self.cwd, args.get("cwd", './'))
-        cwd = os.path.normpath(os.path.abspath(raw_path))
-        code_cwd = os.path.normpath(self.cwd)
-        tool_n = args.get('_tool_num', 1)
-        maxlen = max(10000 // tool_n, 3000)  # floor at 3000
+        except (ValueError, TypeError): timeout = 120
+        try:
+            trusted_root, cwd_path = _resolve_code_run_cwd(
+                self.cwd, args.get("cwd", "./"),
+            )
+        except (OSError, PermissionError, ValueError) as error:
+            denied = {"status": "error", "msg": str(error)}
+            yield f"[Status] ❌ {denied['msg']}\n"
+            return StepOutcome(denied, next_prompt="\n")
+        cwd = str(cwd_path)
+        code_cwd = str(trusted_root)
+        maxlen = max(self._get_tool_maxlen(10000, args), 3000)  # floor at 3000
         if code_type == 'python' and args.get("inline_eval"):
             ns = {'handler':self, 'parent':self.parent, 'history':json.dumps(self.parent.llmclient.backend.history)}
             old_cwd = os.getcwd()
@@ -622,8 +1344,18 @@ class GenericAgentHandler(BaseHandler):
                     except SyntaxError: exec(code, ns); result = ns.get('_r', 'OK')
                 except Exception as e: result = f'Error: {e}'
             finally: os.chdir(old_cwd)
-        else: result = yield from code_run(code, code_type, timeout, cwd, code_cwd=code_cwd, stop_signal=self.code_stop_signal, maxlen=maxlen, myprint=self.print)
+        else: result = yield from code_run(
+            code, code_type, timeout, cwd, code_cwd=code_cwd,
+            stop_signal=self.code_stop_signal, maxlen=maxlen,
+            myprint=self.print, trusted_execution_root=str(trusted_root),
+            sandboxed=sandboxed,
+        )
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
+        recovery_hint = _code_run_memory_recovery_hint(code, result)
+        if recovery_hint:
+            result = dict(result)
+            result["recovery_hint"] = recovery_hint
+            next_prompt += f"\n\n[SYSTEM RECOVERY] {recovery_hint}"
         return StepOutcome(result, next_prompt=next_prompt)
     
     def do_ask_user(self, args, response):
@@ -632,6 +1364,91 @@ class GenericAgentHandler(BaseHandler):
         result = ask_user(question, candidates)
         yield f"Waiting for your answer ...\n"
         return StepOutcome(result, next_prompt="", should_exit=True)
+
+    def do_session_search(self, args, response):
+        """Search durable history within the current transport-neutral conversation."""
+        identity = dict((getattr(self.parent, "active_task", None) or {}).get("conversation_identity") or {})
+        if not identity:
+            return StepOutcome({"status": "error", "msg": "conversation identity unavailable"}, next_prompt="\n")
+        try:
+            from session_store import ConversationIdentity
+            cid = ConversationIdentity(**{
+                key: identity.get(key, "")
+                for key in ("platform", "account", "conversation", "actor")
+            })
+            rows = self.parent.session_store.search(
+                cid, args.get("query", ""), args.get("limit", 5)
+            )
+            result = {"status": "success", "results": rows}
+        except Exception as error:
+            result = {"status": "error", "msg": str(error)}
+        yield f"[Status] session search returned {len(result.get('results', []))} result(s)\n"
+        return StepOutcome(result, next_prompt="\n")
+
+    def do_skill_propose(self, args, response):
+        """Stage a Markdown Skill proposal; never activates it."""
+        identity = dict((getattr(self.parent, "active_task", None) or {}).get("conversation_identity") or {})
+        if not identity:
+            return StepOutcome({"status": "error", "msg": "conversation identity unavailable"}, next_prompt="\n")
+        try:
+            from session_store import ConversationIdentity
+            cid = ConversationIdentity(**{
+                key: identity.get(key, "")
+                for key in ("platform", "account", "conversation", "actor")
+            })
+            proposal = self.parent.skill_manager.propose(
+                args.get("name", ""), args.get("content", ""),
+                args.get("reason", ""), cid,
+            )
+            result = {
+                "status": "pending_approval", "proposal_id": proposal["id"],
+                "name": proposal["slug"], "sha256": proposal["sha256"],
+                "message": f"Skill proposal staged. Approve with /skill approve {proposal['id']}",
+            }
+        except Exception as error:
+            result = {"status": "error", "msg": str(error)}
+        yield f"[Status] {result.get('status')}\n"
+        return StepOutcome(result, next_prompt="\n")
+
+    def do_source_change_propose(self, args, response):
+        """Stage an exact source/configuration patch for a bound QQ approver."""
+        identity = dict((getattr(self.parent, "active_task", None) or {}).get("conversation_identity") or {})
+        if not identity:
+            return StepOutcome(
+                {"status": "error", "msg": "conversation identity unavailable"},
+                next_prompt="\n",
+            )
+        try:
+            from session_store import ConversationIdentity
+            cid = ConversationIdentity(**{
+                key: identity.get(key, "")
+                for key in ("platform", "account", "conversation", "actor")
+            })
+            path = self._get_abs_path(args.get("path", ""))
+            proposal = self.parent.change_approval.propose_patch(
+                cid, path, args.get("old_content", ""),
+                args.get("new_content", ""), args.get("reason", ""),
+            )
+            commands = {
+                "normal": f"批准执行 {proposal['id']}",
+                "high": f"确认高风险 {proposal['id']}",
+                "emergency": f"查看差异 {proposal['id']}（获取紧急授权挑战码）",
+            }
+            result = {
+                "status": "pending_approval",
+                "proposal_id": proposal["id"],
+                "risk": proposal["risk"],
+                "path": proposal["path"],
+                "before_sha256": proposal["before_sha256"],
+                "after_sha256": proposal["after_sha256"],
+                "expires_at": proposal["expires_at"],
+                "approval_command": commands[proposal["risk"]],
+                "message": "Exact change staged; no source file was modified.",
+            }
+        except Exception as error:
+            result = {"status": "error", "msg": str(error)}
+        yield f"[Status] {result.get('status')}\n"
+        return StepOutcome(result, next_prompt="\n")
     
     def do_web_scan(self, args, response):
         '''获取当前页面内容和标签页列表。也可用于切换标签页。
@@ -640,7 +1457,7 @@ class GenericAgentHandler(BaseHandler):
         tabs_only = args.get("tabs_only", False)
         switch_tab_id = args.get("switch_tab_id", None)
         text_only = args.get("text_only", False)
-        maxlen = 35000 // args.get('_tool_num', 1)
+        maxlen = self._get_tool_maxlen(35000, args, growth_rate=0.5)
         result = web_scan(tabs_only=tabs_only, switch_tab_id=switch_tab_id, text_only=text_only, maxlen=maxlen)
         content = result.pop("content", None)
         yield f'[Info] {str(result)}\n'
@@ -654,6 +1471,10 @@ class GenericAgentHandler(BaseHandler):
         if not script: return StepOutcome("[Error] Script missing. Use ```javascript block or 'script' arg.", next_prompt="\n")
         abs_path = self._get_abs_path(script.strip())
         if os.path.isfile(abs_path):
+            if not _read_allowed(abs_path):
+                denied = _read_denied_result(abs_path)
+                yield f"[Status] ❌ {denied['msg']}\n"
+                return StepOutcome(denied, next_prompt="\n")
             with open(abs_path, 'r', encoding='utf-8') as f: script = f.read()
         save_to_file = args.get("save_to_file", "")
         switch_tab_id = args.get("switch_tab_id") or args.get("tab_id")
@@ -678,7 +1499,7 @@ class GenericAgentHandler(BaseHandler):
         yield f"JS 执行结果:\n{show}\n"
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         result = json.dumps(result, ensure_ascii=False, default=json_default)
-        maxlen = 8000 // args.get('_tool_num', 1)
+        maxlen = self._get_tool_maxlen(8000, args)
         return StepOutcome(smart_format(result, max_str_len=maxlen), next_prompt=next_prompt)
 
     def do_web_search(self, args, response):
@@ -722,6 +1543,10 @@ class GenericAgentHandler(BaseHandler):
         yield f"[Status] ✅ Fetched {len(content)} chars from {result.get('url', url)[:60]}\n"
         if save_to_file:
             abs_path = self._get_abs_path(save_to_file)
+            if not _write_allowed(abs_path):
+                denied = _write_denied_result(abs_path)
+                yield f"[Status] ❌ {denied['msg']}\n"
+                return StepOutcome(denied, next_prompt="\n")
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, 'w', encoding='utf-8') as f:
                 f.write(content)
@@ -732,13 +1557,17 @@ class GenericAgentHandler(BaseHandler):
     def do_file_patch(self, args, response):
         path = self._get_abs_path(args.get("path", ""))
         yield f"[Action] Patching file: {path}\n"
+        if self.memory_only and not _memory_patch_allowed(path):
+            result = {"status": "error", "msg": f"Memory settlement may patch only existing top-level memory text: {path}"}
+            yield f"[Status] ❌ {result['msg']}\n"
+            return StepOutcome(result, next_prompt="\n")
         old_content = args.get("old_content", "")
         new_content = args.get("new_content", "")
         try: new_content = expand_file_refs(new_content, base_dir=self.cwd)
         except ValueError as e:
             yield f"[Status] ❌ 引用展开失败: {e}\n"
             return StepOutcome({"status": "error", "msg": str(e)}, next_prompt="\n")
-        result = file_patch(path, old_content, new_content)
+        result = file_patch(path, old_content, new_content, automatic=self.memory_only)
         yield f"\n{str(result)}\n"
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         return StepOutcome(result, next_prompt=next_prompt)
@@ -750,8 +1579,17 @@ class GenericAgentHandler(BaseHandler):
         mode = args.get("mode", "overwrite")  # overwrite/append/prepend
         action_str = {"prepend": "Prepending to", "append": "Appending to"}.get(mode, "Overwriting")
         yield f"[Action] {action_str} file: {os.path.basename(path)}\n"
-        if not _write_allowed(path):
+        normal_write = _write_allowed(path) and not self.memory_only
+        memory_create = _memory_create_allowed(path)
+        if not (normal_write or memory_create):
             result = _write_denied_result(path)
+            yield f"[Status] ❌ {result['msg']}\n"
+            return StepOutcome(result, next_prompt="\n")
+        if memory_create and mode != "overwrite":
+            result = {
+                "status": "error",
+                "msg": "Memory file_write only supports creating a new top-level .md file in overwrite mode.",
+            }
             yield f"[Status] ❌ {result['msg']}\n"
             return StepOutcome(result, next_prompt="\n")
 
@@ -766,8 +1604,21 @@ class GenericAgentHandler(BaseHandler):
         if not content:
             yield f"[Status] ❌ 失败: 未在回复中找到<file_content>代码块内容\n"
             return StepOutcome({"status": "error", "msg": "No content found. Blank is not supported. Put content inside <file_content>...</file_content> tags in your reply body before call file_write."}, next_prompt="\n")
+        rejection = _memory_rejection_reason(content) if memory_create else ""
+        if rejection:
+            result = {"status": "error", "msg": f"Memory update rejected: {rejection}"}
+            yield f"[Status] ❌ {result['msg']}\n"
+            return StepOutcome(result, next_prompt="\n")
         try:
             new_content = expand_file_refs(content, base_dir=self.cwd)
+            rejection = _memory_rejection_reason(new_content) if memory_create else ""
+            if rejection:
+                raise ValueError(f"Memory update rejected: {rejection}")
+            if memory_create:
+                validate_memory_content(
+                    path, new_content, previous_content="",
+                    automatic=self.memory_only,
+                )
             if mode == "prepend":
                 old = ""
                 try:
@@ -777,6 +1628,10 @@ class GenericAgentHandler(BaseHandler):
                     pass
                 with open(path, 'w', encoding="utf-8") as f:
                     f.write(new_content + old)
+            elif memory_create:
+                with open(path, 'x', encoding="utf-8") as f: f.write(new_content)
+                os.chmod(path, 0o640)
+                _audit_memory_write("create", path)
             else:
                 with open(path, 'a' if mode == "append" else 'w', encoding="utf-8") as f: f.write(new_content)
             yield f"[Status] ✅ {mode.capitalize()} 成功 ({len(new_content)} bytes)\n"
@@ -790,6 +1645,10 @@ class GenericAgentHandler(BaseHandler):
         '''读取文件内容。从第start行开始读取。如有keyword则返回第一个keyword(忽略大小写)周边内容'''
         path = self._get_abs_path(args.get("path", ""))
         yield f"\n[Action] Reading file: {path}\n"
+        if not _read_allowed(path):
+            denied = _read_denied_result(path)
+            yield f"[Status] ❌ {denied['msg']}\n"
+            return StepOutcome(denied, next_prompt="\n")
         start = args.get("start", 1)
         count = args.get("count", 200)
         keyword = args.get("keyword")
@@ -798,7 +1657,7 @@ class GenericAgentHandler(BaseHandler):
                            count=count, show_linenos=show_linenos)
         if show_linenos and not result.startswith("Error:"): result = '由于设置了show_linenos，以下返回信息为：(行号|)内容 。\n' + result 
         if ' ... [TRUNCATED]' in result: result += '\n\n（某些行被截断，如需完整内容可改用 code_run 读取）'
-        maxlen = 15000 // args.get('_tool_num', 1)
+        maxlen = self._get_tool_maxlen(15000, args)
         result = smart_format(result, max_str_len=maxlen, omit_str='\n\n[omitted long content]\n\n')
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         log_memory_access(path)
@@ -814,8 +1673,10 @@ class GenericAgentHandler(BaseHandler):
         return plan_path
     def _check_plan_completion(self):
         if not os.path.isfile(p:=self._in_plan_mode() or ''): return None
-        try: return len(re.findall(r'\[ \]', open(p, encoding='utf-8', errors='replace').read()))
-        except: return None
+        try:
+            with open(p, encoding='utf-8', errors='replace') as f:
+                return len(re.findall(r'\[ \]', f.read()))
+        except (OSError, UnicodeDecodeError): return None
     
     def do_update_working_checkpoint(self, args, response):
         '''为整个任务设定后续需要临时记忆的重点。'''
@@ -886,6 +1747,12 @@ class GenericAgentHandler(BaseHandler):
     
     def do_start_long_term_update(self, args, response):
         '''Agent觉得当前任务完成后有重要信息需要记忆时调用此工具。'''
+        confirmation_rule = (
+            "**受控自动结算**：当前处理器只能修改受限的顶层记忆文本，无需再次 ask_user；"
+            "没有合格信息时不要写入。"
+            if self.memory_only else
+            "**确认与技术边界**：除非用户当前消息已经明确批准本次记忆更新，否则先用 `ask_user` 给出准确路径和动作。"
+        )
         prompt = '''### [总结提炼经验] 既然你觉得当前任务有重要信息需要记忆，请提取最近一次任务中【事实验证成功且长期有效】的环境事实、用户偏好、重要步骤，更新记忆。
 本工具是标记开启结算过程，若已在更新记忆过程或没有值得记忆的点，忽略本次调用。
 **如果没有经验证的，未来能用上的信息，忽略本次调用！**
@@ -894,6 +1761,7 @@ class GenericAgentHandler(BaseHandler):
 - **复杂任务经验**（关键坑点/前置条件/重要步骤）→ L3 精简 SOP（只记你被坑得多次重试的核心要点）
 **禁止**：临时变量、具体推理过程、未验证信息、通用常识、你可以轻松复现的细节、只是做了但没有验证的信息
 **操作**：严格遵循提供的L0的记忆更新SOP。先 `file_read` 看现有 → 判断类型 → 最小化更新 → 无新内容跳过，保证对记忆库最小局部修改。\n
+''' + confirmation_rule + ''' 已有顶层 `.md`、L1/L2 只能 `file_patch`；仅可用 `file_write` 新建顶层 `.md`，禁止覆盖已有记忆；禁止用 `code_run` 修改记忆，禁止修改 `memory/*.py`、JSON、备份和 L4 原始会话。
 ''' + get_global_memory()
         yield "[Info] Start distilling good memory for long-term storage.\n"
         path = './memory/memory_management_sop.md'
@@ -1012,7 +1880,26 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
     def do_doc_edit(self, args, response):
         """Edit .docx/.xlsx documents. Read, create, or edit office documents."""
         from frontends.shared.doc_ops import dispatch
-        result = dispatch(args.get("action", ""), args)
+        action = str(args.get("action", ""))
+        path = self._get_abs_path(args.get("path", ""))
+        dispatch_args = dict(args)
+        dispatch_args["path"] = path
+        if action in {"read", "edit"} and not _read_allowed(path):
+            denied = _read_denied_result(path)
+            result = {"ok": False, "result": denied["msg"]}
+            yield "[Doc] FAIL: " + result["result"] + "\n"
+            return StepOutcome(result, next_prompt=result["result"] + "\n")
+        if action in {"create", "edit"}:
+            raw_output = args.get("output_path") if action == "edit" else args.get("path")
+            output_path = self._get_abs_path(raw_output or args.get("path", ""))
+            if Path(output_path).is_symlink() or not _write_allowed(output_path):
+                denied = _write_denied_result(output_path)
+                result = {"ok": False, "result": denied["msg"]}
+                yield "[Doc] FAIL: " + result["result"] + "\n"
+                return StepOutcome(result, next_prompt=result["result"] + "\n")
+            if action == "edit" and args.get("output_path"):
+                dispatch_args["output_path"] = output_path
+        result = dispatch(action, dispatch_args)
         s = result.get("result", "")
         if result.get("path"):
             s += "\n[FILE:" + result["path"] + "]"
@@ -1073,6 +1960,10 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
         if not server or not tool:
             yield "[MCP] ERROR: server and tool required.\n"
             return StepOutcome({"error": "server and tool required"}, next_prompt="\n")
+        if not _mcp_tool_allowed(server, tool):
+            error = f"{server}/{tool} not allowlisted by GENERICAGENT_MCP_ALLOWLIST"
+            yield f"[MCP] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
         try:
             import subprocess, json
             cmd = [sys.executable, "-m", "mcp_cli", "call", server, tool, json.dumps(tool_args)]
@@ -1096,6 +1987,10 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
 
     def do_qq_group_op(self, args, response):
         """QQ 群管理操作：禁言/解禁/踢人/公告等。通过 NapCat WebSocket 执行。"""
+        if not _env_flag_enabled("GENERICAGENT_QQ_ADMIN_ENABLED"):
+            error = "QQ group administration disabled by GENERICAGENT_QQ_ADMIN_ENABLED"
+            yield f"[QQGroup] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
         op = args.get("op", "")
         user_id = args.get("user_id", "")
         group_id = args.get("group_id", "")
@@ -1104,6 +1999,34 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
         if not op:
             yield "[QQGroup] ERROR: op required (ban/unban/kick/notice)\n"
             return StepOutcome({"error": "op required"}, next_prompt="\n")
+        if op not in {"ban", "unban", "kick", "notice"}:
+            yield f"[QQGroup] Unknown op: {op}\n"
+            return StepOutcome({"error": f"unknown op {op}"}, next_prompt="\n")
+        if isinstance(group_id, bool) or not re.fullmatch(r"[0-9]+", str(group_id)):
+            error = "group_id must be numeric"
+            yield f"[QQGroup] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
+        if op in {"ban", "unban", "kick"} and (
+            isinstance(user_id, bool) or not re.fullmatch(r"[0-9]+", str(user_id))
+        ):
+            error = f"user_id must be numeric for {op}"
+            yield f"[QQGroup] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
+        if op == "ban" and (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or not 1 <= duration <= 2592000
+        ):
+            error = "duration must be an integer from 1 to 2592000 for ban"
+            yield f"[QQGroup] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
+        if op == "notice" and (not isinstance(text, str) or not text.strip()):
+            error = "text must be non-empty for notice"
+            yield f"[QQGroup] ERROR: {error}\n"
+            return StepOutcome({"error": error}, next_prompt="\n")
+        group_id = int(group_id)
+        if op in {"ban", "unban", "kick"}:
+            user_id = int(user_id)
         # Map operations to NapCat API calls
         action_map = {
             "ban": ("set_group_ban", {"group_id": group_id, "user_id": user_id, "duration": duration}),
@@ -1111,24 +2034,22 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
             "kick": ("set_group_kick", {"group_id": group_id, "user_id": user_id, "reject_add_request": False}),
             "notice": ("_send_group_notice", {"group_id": group_id, "content": text}),
         }
-        if op not in action_map:
-            yield f"[QQGroup] Unknown op: {op}\n"
-            return StepOutcome({"error": f"unknown op {op}"}, next_prompt="\n")
         action, params = action_map[op]
         try:
-            import json, asyncio, subprocess
+            import json, subprocess
             # Use aiohttp to call NapCat via WebSocket (local subprocess)
             ws_code = (
-                "import asyncio, json, aiohttp\nasync def main():\n"
+                "import asyncio, json, sys, aiohttp\npayload = json.loads(sys.argv[1])\nasync def main():\n"
                 "  async with aiohttp.ClientSession() as s:\n"
                 "    async with s.ws_connect('ws://127.0.0.1:3001/ws', timeout=5) as ws:\n"
-                f"      await ws.send_json({json.dumps({'action': action, 'params': params})})\n"
+                "      await ws.send_json(payload)\n"
                 "      msg = await asyncio.wait_for(ws.receive(), timeout=5)\n"
                 "      if msg.type == aiohttp.WSMsgType.TEXT:\n"
                 "        print(json.loads(msg.data).get('status',''))\n"
                 "asyncio.run(main())\n"
             )
-            r = subprocess.run([sys.executable, '-c', ws_code],
+            payload = json.dumps({"action": action, "params": params}, ensure_ascii=False)
+            r = subprocess.run([sys.executable, '-c', ws_code, payload],
                              capture_output=True, text=True, timeout=8)
             result = (r.stdout.strip() or r.stderr.strip())[:200]
             yield f"[QQGroup] {op}: {result}\n"
@@ -1145,12 +2066,15 @@ Downloads all pages to temp/jmcomic/ and returns FILE refs."""
         rsumm = re.search(r"<summary>(.*?)</summary>", _c, re.DOTALL)
         if rsumm: summary = rsumm.group(1).strip()
         else:
-            tc = tool_calls[0]; tool_name, args = tc['tool_name'], tc['args']   # at least one because no_tool
-            clean_args = {k: v for k, v in args.items() if not k.startswith('_')}
-            summary = f"调用工具{tool_name}, args: {clean_args}"
-            if tool_name == 'no_tool': summary = "直接回答了用户问题"
+            tc = tool_calls[0]
+            clean_args = {k: v for k, v in tc['args'].items() if not k.startswith('_')}
+            summary = _c.strip() or smart_format(
+                "直接回答了用户问题"
+                if tc['tool_name'] == 'no_tool'
+                else f"{tc['tool_name']}, args: {clean_args}",
+                max_str_len=40,
+            )
             next_prompt += "\n\n\n[SYSTEM] 必须在回复文本中包含<summary>！\n\n"
-            summary = smart_format(summary.replace('\n', ''), max_str_len=40)
         summary = smart_format(summary.replace('\n', ''), max_str_len=80)
         self.history_info.append(f'[Agent] {summary}')
         _plan = self._in_plan_mode()
@@ -1176,13 +2100,25 @@ def get_global_memory():
     prompt = "\n"
     try:
         suffix = '_en' if os.environ.get('GA_LANG', '') == 'en' else ''
-        with open(os.path.join(script_dir, 'memory/global_mem_insight.txt'), 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
+        insight_path = os.path.join(script_dir, 'memory/global_mem_insight.txt')
+        with open(insight_path, 'r', encoding='utf-8', errors='replace') as f: insight = f.read()
+        validate_injected_memory(insight_path, insight)
         with open(os.path.join(script_dir, f'assets/insight_fixed_structure{suffix}.txt'), 'r', encoding='utf-8') as f: structure = f.read()
         prompt += f'cwd = {os.path.join(script_dir, "temp")} (./)\n'
         prompt += f"\n[Memory] (../memory)\n"
         prompt += structure + '\n../memory/global_mem_insight.txt:\n'
         prompt += insight + "\n"
-        with open(os.path.join(script_dir, 'memory/personal_bootstrap_profile.md'), 'r', encoding='utf-8', errors='replace') as f:
-            prompt += f"\n[Profile] (../memory/personal_bootstrap_profile.md):\n" + f.read() + "\n"
+        profile_path = os.path.join(script_dir, 'memory/personal_bootstrap_profile.md')
+        with open(profile_path, 'r', encoding='utf-8', errors='replace') as f:
+            profile = f.read()
+        validate_injected_memory(profile_path, profile)
+        prompt += f"\n[Profile] (../memory/personal_bootstrap_profile.md):\n" + profile + "\n"
+        try:
+            from skill_manager import render_skill_catalog
+            catalog = render_skill_catalog(os.path.join(script_dir, "memory", "skills"))
+            if catalog:
+                prompt += "\n[Approved Skills] Read the matching SKILL.md only when relevant:\n" + catalog + "\n"
+        except Exception as error:
+            print(f"[WARN] Skill catalog unavailable: {error}")
     except FileNotFoundError: pass
     return prompt

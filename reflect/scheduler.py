@@ -1,12 +1,13 @@
-import os, json, time as _time, socket as _socket, logging
+import contextlib, io, os, json, time as _time, socket as _socket, logging
 from datetime import datetime, timedelta
 
 # 端口锁：防止重复启动，bind失败时agentmain会直接崩溃退出
 # reload时mod.__dict__保留_lock，跳过重复绑定
-try: _lock
-except NameError:
-    _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
+if os.environ.get('GENERICAGENT_SKIP_SCHEDULER_LOCK') != '1':
+    try: _lock
+    except NameError:
+        _lock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        _lock.bind(('127.0.0.1', 45762)); _lock.listen(1)
 
 # dedup: prevent same-task re-trigger within one check cycle
 _triggered_tasks: dict = {}
@@ -32,10 +33,21 @@ if not _logger.handlers:
 
 # 默认最大延迟窗口（小时），超过此时间不触发
 DEFAULT_MAX_DELAY = 6
-_L4_INTERVAL = 60       # L4 archive check interval (seconds)
+_L4_INTERVAL = 600      # L4 archive check interval (seconds)
 _l4_t = 0               # last L4 archive time
 _MINING_INTERVAL = 600  # salient mining interval (seconds, 10min)
 _mining_t = 0           # last mining run time
+
+
+def _l4_result_is_actionable(result):
+    result = result or {}
+    try:
+        return any(int(result.get(key, 0) or 0) > 0 for key in (
+            'processed', 'errors', 'deleted_raw',
+        ))
+    except (TypeError, ValueError):
+        return False
+
 
 def _parse_cooldown(repeat):
     """解析repeat为冷却时间(比实际周期略短,防漂移)"""
@@ -76,10 +88,17 @@ def check():
             import sys; sys.path.insert(0, os.path.join(_dir, '../memory/L4_raw_sessions'))
             from compress_session import batch_process
             raw_dir = os.path.join(_dir, '../temp/model_responses')
-            r = batch_process(raw_dir, dry_run=False)
-            print(f'[L4 cron] {r}')
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = batch_process(raw_dir, dry_run=False)
+            if _l4_result_is_actionable(r):
+                print('[L4 cron] '
+                      f'processed={r.get("processed", 0)} '
+                      f'errors={r.get("errors", 0)} '
+                      f'deleted={r.get("deleted_raw", 0)}')
         except Exception as e:
-            _logger.error(f'L4 archive failed: {e}')
+            # 失败时回退时间戳，让下一轮立即重试而非等一个完整间隔
+            _l4_t -= _L4_INTERVAL
+            _logger.error(f'L4 archive failed: {e}', exc_info=True)
 
     # L4 → L2 salient mining cron (every 10min, incremental)
     global _mining_t

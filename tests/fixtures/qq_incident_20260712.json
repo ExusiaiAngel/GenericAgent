@@ -1,0 +1,16 @@
+{
+  "self_evolution": {
+    "query": "进行四轮自进化",
+    "response_count": 6,
+    "last_text": "使用完整路径重试。",
+    "last_tool": "code_run",
+    "expected_terminal": "max_turns"
+  },
+  "web_research": {
+    "query": "在互联网上查找有关异度之刃新作的消息，写个总结",
+    "response_count": 6,
+    "last_text": "网络受限严重。尝试抓取国内游戏站点。",
+    "last_tool": "web_fetch",
+    "expected_terminal": "max_turns"
+  }
+}

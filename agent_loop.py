@@ -50,7 +50,7 @@ class _StuckDetector:
     """Detects agent stuck patterns: repeated calls, A-B-A-B loops, no progress."""
     def __init__(self, max_repeat=4, max_aba=4):
         self._history = []       # list of (tool_name, args_summary)
-        self._last_len = 0
+        self._lengths = []
         self.max_repeat = max_repeat
         self.max_aba = max_aba
 
@@ -60,7 +60,12 @@ class _StuckDetector:
             k = _make_stuck_key(tc.get('tool_name', ''), tc.get('args', {}))
             if k: keys.append(k)
         self._history.append(keys)
-        self._last_len = full_resp_len
+        self._lengths.append(int(full_resp_len or 0))
+        # 检查窗口只需 max(max_repeat, max_aba, 3) 轮，超出即裁剪防无界增长
+        keep = max(self.max_repeat, self.max_aba, 3)
+        if len(self._history) > keep:
+            self._history = self._history[-keep:]
+            self._lengths = self._lengths[-keep:]
 
     def check(self, full_resp_len) -> str | None:
         """Returns a warning string if stuck, or None."""
@@ -85,7 +90,8 @@ class _StuckDetector:
         if len(self._history) >= 3:
             last3 = self._history[-3:]
             if len(last3[0]) >= 1 and all(h == last3[0] for h in last3):
-                if abs(full_resp_len - self._last_len) < 20:
+                recent_lengths = self._lengths[-3:]
+                if max(recent_lengths) - min(recent_lengths) < 20:
                     return "⚠️ 连续3轮无进展，请换一种方式解决问题"
 
         return None
@@ -130,6 +136,11 @@ def agent_runner_loop(client, system_prompt, user_input, handler, tools_schema,
             yield f"\n\n{stuck_warn}\n\n"
        
         tool_results = []; next_prompts = set(); exit_reason = {}
+        if stuck_warn:
+            next_prompts.add(
+                f"[SYSTEM] {stuck_warn}。不要重复相同调用；改用不同工具、"
+                "缩小问题，或说明阻塞并结束。"
+            )
         for ii, tc in enumerate(tool_calls):
             tool_name, args, tid = tc['tool_name'], tc['args'], tc.get('id', '')
             if tool_name == 'no_tool': pass

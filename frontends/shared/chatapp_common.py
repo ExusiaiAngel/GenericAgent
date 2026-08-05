@@ -87,35 +87,7 @@ _RX_TURN = re.compile(
     r"\*{0,2}(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{3,}\*{0,2}"
     r"|\[Turn \d+\].*?\.{3,}",
     re.IGNORECASE)
-_RX_EMPTY_FENCE = re.compile(r"```+\s*\n\s*```+\s*")
-_RX_FENCE_BLOCK = re.compile(r"````+\w*[^\n]*\n(?:.*\n)*?````+", re.DOTALL)
-_RX_SEP_LINE = re.compile(r"^[`\-=*]{3,}\s*$", re.MULTILINE)
 _RX_BLANK_COLLAPSE = re.compile(r"\n{3,}")
-# ── 激进过滤（仅短对话） ──
-_RX_SYS_INFO = re.compile(
-    r"^.*?(?:PID|CPU%|MEM%|load average|uptime\s*:|Mem:|Swap:|Tasks:|Cpu\(s\):).*$",
-    re.MULTILINE)
-_RX_STDIO = re.compile(r"^.*?(?:stdout|stderr|exit_code)\s*[:=]\s*.*$", re.MULTILINE)
-_RX_LOG_NOISE = re.compile(
-    r"^.*?(?:\[Watchdog\]|\[Info\]|\[Warn\]|\[Error\]|\[DEBUG\]|\[TRACE\])\s+\d{4}-\d{2}-\d{2}.*$",
-    re.MULTILINE)
-_RX_TIMESTAMP = re.compile(r"^.*\b\d{4}-\d{2}-\d{2}_\d{4}_\w+\b.*$", re.MULTILINE)
-_RX_JSON_LINE = re.compile(r"^\s*\{.*?['\"]\w+['\"]\s*:.*\}.*$", re.MULTILINE)
-_RX_FILE_PATH = re.compile(
-    r"^.*/opt/\S+(?:/\S+){2,}.*$"
-    r"|^.*\./\S+/\S+.*$"
-    r"|^.*\[FILE:[^\]]+\].*$",
-    re.MULTILINE)
-_RX_TABLE_LINE = re.compile(r"^\|(?:.*?\|){2,}\s*$", re.MULTILINE)
-_RX_TABLE_SEP = re.compile(r"^[\|:\-=+]{3,}\s*$", re.MULTILINE)
-_RX_EQUALS_LINE = re.compile(r"^={3,}.*$", re.MULTILINE)
-_RX_SHELL_NOISE = re.compile(r"^[a-z]{2,5}[>#\$]\s.*$", re.MULTILINE)
-_RX_CMD_OUT1 = re.compile(r"^\s*\S+\s+\d+\s+[\d.]+\s+[\d.]+\s+\S+\s+\S+\s+\S+\s+.*$", re.MULTILINE)
-_RX_CMD_OUT2 = re.compile(r"^\s*\d+\s+[\d.]+\s+[\d.]+\s*.*$", re.MULTILINE)
-_RX_PS_LINE = re.compile(r"^\s*\d+\s+\S+\s+\d+:\d+:\d+\s+\S+.*$", re.MULTILINE)
-_RX_REACT_PREFIX = re.compile(
-    r"^(?:Thought|Action|Observation|Input)\s*:.*$", re.MULTILINE)
-_RX_SYSTEM_TAG = re.compile(r"^\[SYSTEM\].*$", re.MULTILINE)
 
 
 def clean_reply(text):
@@ -123,10 +95,52 @@ def clean_reply(text):
         text = re.sub(pat, "", text or "", flags=re.DOTALL)
     return re.sub(r"\n{3,}", "\n\n", text).strip() or "..."
 
+
+def _strip_agent_fence_blocks(text: str) -> str:
+    """Remove four-or-more-backtick agent transcript fences in linear time.
+
+    Agent tool output uses at least four backticks so ordinary Markdown code
+    fences remain visible.  A streaming response can end before the closing
+    fence arrives; in that case the fence head line itself is dropped but the
+    trailing content is kept, so a truncated transcript cannot swallow the
+    user-facing final answer.
+    """
+    lines = text.splitlines(keepends=True)
+    output = []
+    fence_width = 0
+    fence_line_idx = -1
+    for idx, line in enumerate(lines):
+        candidate = line.lstrip()
+        ticks = len(candidate) - len(candidate.lstrip("`"))
+        if fence_width:
+            if ticks >= fence_width:
+                fence_width = 0
+                fence_line_idx = -1
+            continue
+        if ticks >= 4:
+            fence_width = ticks
+            fence_line_idx = idx
+            continue
+        output.append(line)
+    if fence_width and fence_line_idx >= 0:
+        output.extend(lines[fence_line_idx + 1:])
+    return "".join(output)
+
 def _extract_final_answer(text: str) -> str:
-    """清除 agent 工具调用噪音，只保留最终回复（适用于QQ等聊天前端）。"""
+    """Remove protocol-only agent noise without rewriting valid user content."""
     if not text:
         return ""
+    # Verbose agent output contains every reasoning/tool turn in one string.
+    # A fenced tool transcript from an earlier turn can span far enough for the
+    # generic fence regex to consume the later user-facing answer.  The final
+    # answer, when present, belongs to the last LLM turn, so isolate that turn
+    # before applying the noise filters.
+    turns = _RX_TURN.split(text)
+    if len(turns) > 1:
+        tail = turns[-1]
+        # 文本以 Turn 标记结尾时末段为空，回退全文交给后续过滤器，
+        # 避免把整个答案截成空串。
+        text = tail if tail.strip() else text
     # Phase 1: 工具调用块
     text = _RX_TOOL_BLOCK.sub("", text)
     text = _RX_TOOL_LINE.sub("", text)
@@ -141,32 +155,34 @@ def _extract_final_answer(text: str) -> str:
     text = _RX_TURN.sub("", text)
     text = _RX_THINK_PLACEHOLDER.sub("", text)
     text = _RX_STRAY_BRACE.sub("", text)
-    # Phase 4: 围栏块 + 分隔线
-    text = _RX_FENCE_BLOCK.sub("", text)
-    text = _RX_EMPTY_FENCE.sub("", text)
-    text = _RX_SEP_LINE.sub("", text)
+    # Phase 4: four-or-more-backtick fences are internal transcripts.  Normal
+    # Markdown fences use three backticks and are user-visible content.
+    text = _strip_agent_fence_blocks(text)
     # Phase 5: 行尾空格 + 折叠空白
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)
     text = _RX_BLANK_COLLAPSE.sub("\n\n", text)
 
-    # Phase 6: 激进系统噪音清除（仅短对话，保护结构化报告）
-    lines = [l for l in text.split("\n") if l.strip()]
-    heading_count = sum(1 for l in lines if l.startswith("##"))
-    is_report = heading_count >= 2 or (len(lines) >= 20 and heading_count >= 1)
-    if not is_report:
-        for rx in (_RX_SYS_INFO, _RX_STDIO, _RX_LOG_NOISE, _RX_TIMESTAMP,
-                   _RX_JSON_LINE, _RX_FILE_PATH, _RX_TABLE_LINE,
-                   _RX_TABLE_SEP, _RX_EQUALS_LINE, _RX_SHELL_NOISE,
-                   _RX_CMD_OUT1, _RX_CMD_OUT2, _RX_PS_LINE,
-                   _RX_REACT_PREFIX, _RX_SYSTEM_TAG):
-            text = rx.sub("", text)
-    # Phase 7: 行尾整理
+    # Phase 6: whitespace-only normalization.  Generic JSON, tables, paths,
+    # numbered rows, Markdown emphasis and fences are all legitimate answers;
+    # filtering them by shape corrupts exact-output requests.
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\*{2,}", "", text)          # 先移除 **（可能产生纯空格行）
-    text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)  # 清理 ** 残留的纯空格行
+    text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def format_for_chat(text: str, *, is_group=False, max_chars=None) -> str:
+    """Return the complete cleaned answer; transports own message splitting.
+
+    ``is_group`` and ``max_chars`` remain accepted for frontend compatibility,
+    but content is never summarized or truncated at this layer.
+    """
+    clean = _extract_final_answer(text or "")
+    clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+    if not clean:
+        return "这次没有生成可发送的最终答案，请重试。"
+    return clean
 
 
 def extract_files(text):
@@ -358,10 +374,19 @@ def require_runtime(agent, label, **required):
         sys.exit(1)
 
 
+def _open_private_log(path):
+    """Open an append-only runtime log and enforce owner/group-only access."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    flags |= getattr(os, "O_NOFOLLOW", 0)  # 拒绝符号链接，防 temp 目录被恶意替换
+    fd = os.open(path, flags, 0o640)
+    os.fchmod(fd, 0o640)
+    return os.fdopen(fd, "a", encoding="utf-8", buffering=1)
+
+
 def redirect_log(script_file, log_name, label, allowed):
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(script_file))), "temp")
     os.makedirs(log_dir, exist_ok=True)
-    logf = open(os.path.join(log_dir, log_name), "a", encoding="utf-8", buffering=1)
+    logf = _open_private_log(os.path.join(log_dir, log_name))
     sys.stdout = sys.stderr = logf
     print(f"[NEW] {label} process starting, the above are history infos ...")
     print(f"[{label}] allow list: {allowed_label(allowed)}")

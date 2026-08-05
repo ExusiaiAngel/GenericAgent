@@ -4,10 +4,11 @@ set -u
 
 ROOT=/opt/GenericAgent
 PY=$ROOT/venv/bin/python
+STATUS_RC=0
 
 ok_msg() { echo "[OK] $1"; }
 warn_msg() { echo "[WARN] $1"; }
-fail_msg() { echo "[FAIL] $1"; }
+fail_msg() { echo "[FAIL] $1"; STATUS_RC=1; }
 
 check_svc() {
     local label="$1" svc="$2"
@@ -71,6 +72,12 @@ iptables -C INPUT ! -i lo -p tcp -m multiport --dports 3000,3001,6099 -j DROP 2>
 echo ''
 echo '-- OneBot health --'
 if out=$(ws_status 2>&1); then ok_msg "OneBot get_status $out"; else fail_msg "OneBot get_status $out"; fi
+frontend_pid=$(systemctl show genericagent-napcat.service -p MainPID --value 2>/dev/null || echo 0)
+if out=$("$PY" "$ROOT/scripts/frontend_heartbeat.py" --check --max-age 10 --pid "${frontend_pid:-0}" 2>&1); then
+    ok_msg "NapCat frontend $out"
+else
+    fail_msg "NapCat frontend $out"
+fi
 
 echo ''
 echo '-- Dashboard --'
@@ -112,13 +119,16 @@ fi
 echo ''
 
 echo '-- Logs --'
-echo '[NapCat] last 3:'
-tail -3 "$ROOT/frontends/temp/napcat_qqapp.log" 2>/dev/null | sed 's/^/  /'
-echo '[Scheduler] last 3:'
-journalctl -u genericagent --no-pager -n 3 2>/dev/null | tail -3 | sed 's/^/  /'
+napcat_errors=$(journalctl -u genericagent-napcat.service --since '-15 minutes' --no-pager 2>/dev/null | grep -Eci 'traceback|error|failed|timeout' || true)
+agent_active_since=$(systemctl show genericagent.service -p ActiveEnterTimestamp --value 2>/dev/null || echo '-15 minutes')
+runtime_errors=$(journalctl -u genericagent.service --since "$agent_active_since" --no-pager 2>/dev/null \
+  | grep -Eci 'Traceback \(most recent call last\)|Backend Error:|\[ERROR\]|\[IPC\] request failed:|Unhandled exception|FATAL' || true)
+echo "NapCat error events (15m): $napcat_errors"
+echo "Agent runtime error events (current service session): $runtime_errors"
 
 echo ''
 free -h | awk '/^Mem:/ {print "Memory: "$3"/"$2" available=" $7}'
 df -h / | awk 'NR==2 {print "Disk /: "$3"/"$2" used ("$5")"}'
 uptime -p
 echo '=============================='
+exit "$STATUS_RC"

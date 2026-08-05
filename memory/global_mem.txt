@@ -11,7 +11,7 @@
 
 ## Python environment
 
-- **Python:** 3.13.13 at `/usr/bin/python3`
+- **Python:** 3.12.3 at `/opt/GenericAgent/venv/bin/python`
 - **Package manager:** pip
 - **Activation:** `ga.sh` (bash script) or `python -m ga_cli`
 - **Install:** `pip install -e .`
@@ -19,13 +19,13 @@
 
 ## Toolchain versions
 
-- **Git:** 2.54.0.windows.1
-- **Docker:** 29.4.3 (daemon: Docker Desktop, not running by default)
-- **Node.js:** v24.15.0
-- **npm:** 11.12.1
+- **Git:** 2.43.0
+- **Docker CLI:** 29.1.3
+- **Node.js:** v18.19.1
+- **npm:** 9.2.0
+- **Bubblewrap:** 0.9.0 (`code_run` isolation)
 - **Python encoding:** PYTHONIOENCODING=utf-8, PYTHONUTF8=1
-- **SSH keys:** 0 (no keys generated; known_hosts exists)
-- **Tracked .example:** mykey_local.py.example (template only, no actual config)
+- **Tracked .example:** `mykey_local.py.example` (template only, no actual config)
 
 ## API config
 
@@ -50,7 +50,7 @@
   - `frontends/conductor/` — FastAPI web conductor (conductor.py)
   - `frontends/dcapp.py` — Discord bot
   - `assets/agent_bbs.py` — web-based agent BBS
-- **Memory:** `memory/` — L1 session, L2 global, L3 crystallized SOPs and facts
+- **Memory:** `memory/` — L1 index, L2 stable facts, L3 crystallized SOPs, L4 raw history
 - **Reflection:** `reflect/` — agent self-analysis outputs
 - **Plugins:** `plugins/` — extensible plugin directory
 - **Docs:** `docs/` — architecture docs, SOPs, superpowers catalog
@@ -64,6 +64,13 @@
   - `trash_review/` — files proposed for deletion; never delete originals without confirmation
 - **Temp/scratch:** `temp/` (relative to project root; used by task runner for artifact output)
 - **Backups:** none configured explicitly — use sandbox workspace for safe copies
+
+## Controlled memory writes
+
+- General tools may write only to configured sandbox roots.
+- With `GENERICAGENT_MEMORY_ROOT=/opt/GenericAgent/memory`, `file_patch` may update existing top-level `.md`, `global_mem.txt`, and `global_mem_insight.txt` after explicit approval.
+- `file_write` may only create a new top-level `.md`; existing memory cannot be overwritten/appended/prepended.
+- `code_run`, nested paths, symlink escapes, Python/JSON/backups, and L4 raw sessions remain read-only.
 
 ## Task Runner — Stable Rules (2026-06-09)
 
@@ -79,115 +86,55 @@
 - Requested deliverables must be written with absolute sandbox paths; relative artifact paths may land in `temp/` and fail acceptance
 - Never use bare shell `&` or `nohup`; never use unconditional `killall`
 
-## L4-Mined Facts (auto)
-- [0608_2226-0609_2100] SOP referenced by user: 请读取 memory/personal_bootstrap_profile.md、memory/cold_start_task_queue.md、memory/personal_supervision
-- [0608_2226-0609_2100] Linux context mentioned: 我批准 GenericAgent 将任务提示和必要项目文件内容发送给当前配置的 deepseek-v4-flash API，并允许你用 WSL 命令直接运行它。
-- [0608_2226-0609_2100] Linux context mentioned: 我批准 GenericAgent 将任务提示和必要项目文件内容发送给当前配置的 deepseek-v4-flash API，并允许你用 WSL 命令直接运行它。
-- [0608_2226-0609_2100] Linux context mentioned: 我明确批准 GenericAgent 将任务提示和必要项目文件内容发送给当前配置的 deepseek-v4-flash API，并允许你用 WSL 命令直接运行它。
-- [0608_2226-0609_2100] Linux context mentioned: 我明确批准 GenericAgent 将任务提示和必要项目文件内容发送给当前配置的 deepseek-v4-flash API，并允许你用 WSL 命令直接运行它。
 
-- [0609_0815-0609_0816] Linux context mentioned: 你正在被外部监督。当前任务是修复 GenericAgent 的 Linux/WSL `ga` launcher。  背景：Launch Readiness Check 发现 `/home/exusia
-- [0609_0815-0609_0816] Sandbox report output: 你正在被外部监督。当前任务是修复 GenericAgent 的 Linux/WSL `ga` launcher。  背景：Launch Readiness Check 发现 `/home/exusia
-- [0609_0825-0609_0826] Linux context mentioned: 你正在被外部监督。当前任务是把刚完成的 GenericAgent Linux/WSL `ga` launcher 修复经验沉淀为可复用 SOP 草案。  关键限制： - 不要修改任何真实项目文件。 -
-- [0609_1636-0609_1637] Sandbox report output: 你是 GenericAgent，在一次冷启动后的自检演练中。请不要修改正式项目文件；只能写当前任务目录和 /home/exusiai/projects/genericagent_sandbox/rep
-- [0609_1651-0609_1654] Sandbox report output: 你是 GenericAgent worker。任务：做一次真实的 watchdog 实战使用报告。不要修改正式项目文件，只写指定 sandbox 任务目录和 reports。  所有交付文件必须用绝对
-- [0609_1717-0609_1718] Sandbox report output: 返工单：上一轮 memory_gap_analyzer 演练核心脚本和测试通过，但外部监察验收失败。原因：要求的 /home/exusiai/projects/genericagent_sandbox
-- [0609_1725-0609_1726] Sandbox report output: 返工单：上一轮 memory_gap_patch_plan 交付完整且 watchdog 通过，但外部监察拒绝补丁方案。原因：你一边建议 Do NOT apply，一边提供了会修改 L1 的 patc
-- [0609_2309-0609_2309] Sandbox report output: 请进行一次低风险的网页信息采集测试。  任务：获取 pip 最新版本的发布信息。  步骤： 1. 尝试用 curl 获取 https://pypi.org/pypi/pip/json (这是 pip 
-- [0609_2356-0609_2356] Sandbox report output: 你是 GenericAgent 个人电脑管家。请生成一份简洁的「每日简报」。  简报必须包含以下6个部分，每部分最多3行：  ## 1. 系统状态 用单个 bash 命令采集: uptime, fre
-- [0611_0101-0611_0102] Linux/bash env mentioned: 请检查 GenericAgent 项目刚刚完成的一系列修复是否有效。需要验证以下项目： 1. task_watchdog.py 的 Windows PID 检测（检查 import 是否正常） 2. 
-- [0611_0104-0611_0105] Sandbox report output: 执行 冷启动任务 #12 (File Organization Analysis) 的 Pass 2。 读取 memory/cold_start_task_queue.md 了解三遍方法论。 读取 s
-- [0611_0109-0611_0110] SOP referenced by user: 执行 Memory Index Hygiene。读取 memory/memory_index_hygiene_sop.md 了解流程。 打开 memory/global_mem_insight.txt
-- [0611_0109-0611_0110] Linux/bash env mentioned: 执行 Memory Index Hygiene。读取 memory/memory_index_hygiene_sop.md 了解流程。 打开 memory/global_mem_insight.txt
-- [0611_0110-0611_0112] Sandbox report output: 执行每日健康检查。组合 env_audit + dep_check + git_hygiene 三个 SOP。 输出报告到 sandbox/reports/health_check_2026-06-1
-- [0611_0114-0611_0115] SOP referenced by user: 执行配置审计。读取 memory/config_audit_sop.md 了解流程。检查配置文件健康状态，输出报告到 sandbox/reports/config_audit_2026-06-11.m
-- [0611_0114-0611_0115] Sandbox report output: 执行配置审计。读取 memory/config_audit_sop.md 了解流程。检查配置文件健康状态，输出报告到 sandbox/reports/config_audit_2026-06-11.m
-- [0611_0115-0611_0116] SOP referenced by user: 执行系统监控检查。读取 memory/system_monitor_sop.md 了解流程。检查系统资源状态，输出报告到 sandbox/reports/system_monitor_2026-06-
-- [0611_0115-0611_0116] Sandbox report output: 执行系统监控检查。读取 memory/system_monitor_sop.md 了解流程。检查系统资源状态，输出报告到 sandbox/reports/system_monitor_2026-06-
-- [0611_0116-0611_0117] SOP referenced by user: 执行网络监控检查。读取 memory/network_monitor_sop.md 了解流程。检查网络连接状态、端口监听、DNS 解析等。输出报告到 sandbox/reports/network_m
-- [0611_0116-0611_0117] Sandbox report output: 执行网络监控检查。读取 memory/network_monitor_sop.md 了解流程。检查网络连接状态、端口监听、DNS 解析等。输出报告到 sandbox/reports/network_m
-- [0611_0116-0611_0118] SOP referenced by user: 执行每日简报。读取 memory/daily_brief_sop.md 了解流程。汇总今天的项目状态、已完成的工作、待办事项和系统健康概览。输出报告到 sandbox/reports/daily_br
-- [0611_0116-0611_0118] Sandbox report output: 执行每日简报。读取 memory/daily_brief_sop.md 了解流程。汇总今天的项目状态、已完成的工作、待办事项和系统健康概览。输出报告到 sandbox/reports/daily_br
-- [0611_0116-0611_0118] SOP referenced by user: 执行依赖检查 + 备份验证组合扫描。读取 memory/dep_check_sop.md 和 memory/backup_verify_sop.md 了解流程。检查项目依赖完整性和最近备份状态。输出报
-- [0611_0116-0611_0118] Sandbox report output: 执行依赖检查 + 备份验证组合扫描。读取 memory/dep_check_sop.md 和 memory/backup_verify_sop.md 了解流程。检查项目依赖完整性和最近备份状态。输出报
-- [0611_1748-0611_1749] SOP referenced by user: 执行 GenericAgent 自检。 1. 确认 Python 版本和核心模块可导入（agent_loop, llmcore, ga） 2. 检查 memory/ 目录下有多少个 _sop.md 文
-- [0611_1748-0611_1749] Sandbox report output: 执行 GenericAgent 自检。 1. 确认 Python 版本和核心模块可导入（agent_loop, llmcore, ga） 2. 检查 memory/ 目录下有多少个 _sop.md 文
-- [0611_1749-0611_1750] Linux/bash env mentioned: 执行一次快速的\"系统健康脉搏\"检查。  使用 code_run(bash) 一次性采集： - Python 版本和关键包版本 - 磁盘剩余空间（/ 和 /home） - 当前运行的 pyt
-- [0611_1749-0611_1750] Sandbox report output: 执行一次快速的\"系统健康脉搏\"检查。  使用 code_run(bash) 一次性采集： - Python 版本和关键包版本 - 磁盘剩余空间（/ 和 /home） - 当前运行的 pyt
-- [0611_1749-0611_1750] Sandbox report output: 使用你所有可用的工具（code_run/web_scan/file_read），探索 GenericAgent 项目的架构。  目标：生成一份\"5分钟速览\"文档，帮助新会话快速理解项目。 1. 用
-- [0611_1748-0611_1750] Sandbox report output: 扫描 GenericAgent 项目中的跨文件引用一致性。 1. 读取 memory/global_mem_insight.txt，提取所有被引用的 .md 文件名 2. 对每个引用，检查文件是否实际
-- [0611_1749-0611_1751] Sandbox report output: 对 GenericAgent 的记忆系统做一次\"查漏\"审计。  1. 读取 memory/global_mem_insight.txt（L1） 2. 扫描 memory/ 目录下所有 .md 文件
-- [0611_1752-0611_1753] Sandbox report output: 使用 web_scan 工具打开一个公开网页，验证浏览器工具链是否正常工作。  1. 尝试用 web_scan(ddg.gg) 获取 DuckDuckGo 首页的简化 HTML（只取 tabs_onl
-- [0611_1752-0611_1753] SOP referenced by user: 执行 GenericAgent 的 \"launch readiness\" 快速检查。  参考 memory/launch_readiness_check_sop.md，执行简化版： 1. 用 co
-- [0611_1752-0611_1753] Sandbox report output: 执行 GenericAgent 的 \"launch readiness\" 快速检查。  参考 memory/launch_readiness_check_sop.md，执行简化版： 1. 用 co
-- [0611_1753-0611_1753] Linux/bash env mentioned: 对 GenericAgent 做一次\"代码嗅觉\"扫描。  使用 code_run(bash) 一次性采集： 1. 搜索所有 Python 文件中使用 os.kill 或 os.syst
-- [0611_1753-0611_1753] Sandbox report output: 对 GenericAgent 做一次\"代码嗅觉\"扫描。  使用 code_run(bash) 一次性采集： 1. 搜索所有 Python 文件中使用 os.kill 或 os.syst
-- [0611_1753-0611_1754] Sandbox report output: 做一次\"冷启动任务队列\"的进度审计。  1. 读取 memory/cold_start_task_queue.md 中的进度追踪表 2. 读取 memory/ 目录，统计实际存在的 SOP 文件数
-- [0611_1753-0611_1754] Sandbox report output: 生成 GenericAgent 当前状态的\"驾驶舱\"摘要。  聚合本轮监督会话（round_sv_01 到 round_sv_10）的报告，生成一份综合状态面板： 1. 读取所有已生成的 sand
-- [0611_1939-0611_1939] SOP referenced by user: 执行 Pass 2 优化的 Git 卫生检查。遵循 SOP: memory/git_hygiene_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集：git s
-- [0611_1939-0611_1939] Linux/bash env mentioned: 执行 Pass 2 优化的 Git 卫生检查。遵循 SOP: memory/git_hygiene_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集：git s
-- [0611_1939-0611_1940] SOP referenced by user: 执行 Pass 2 优化的备份验证。遵循 SOP: memory/backup_verify_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 验证关键文件存在性和大
-- [0611_1939-0611_1940] Linux/bash env mentioned: 执行 Pass 2 优化的备份验证。遵循 SOP: memory/backup_verify_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 验证关键文件存在性和大
-- [0611_1939-0611_1940] SOP referenced by user: 执行 Pass 2 优化的系统进程监控。遵循 SOP: memory/system_monitor_sop.md。  优化目标（相比 Pass 1）： - 单次 bash：Get-Proc
-- [0611_1939-0611_1940] Linux/bash env mentioned: 执行 Pass 2 优化的系统进程监控。遵循 SOP: memory/system_monitor_sop.md。  优化目标（相比 Pass 1）： - 单次 bash：Get-Proc
-- [0611_1938-0611_1940] SOP referenced by user: 执行 Pass 2 优化的依赖检查。遵循 SOP: memory/dep_check_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集完成后用 Python 分
-- [0611_1938-0611_1940] Linux/bash env mentioned: 执行 Pass 2 优化的依赖检查。遵循 SOP: memory/dep_check_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集完成后用 Python 分
-- [0611_1939-0611_1940] SOP referenced by user: 执行 Pass 2 优化的每日简报。遵循 SOP: memory/daily_brief_sop.md。  优化目标（相比 Pass 1）： - 紧凑 5 段式简报，目标 ≤4 轮 - 直接写报告到 
-- [0611_1940-0611_1942] SOP referenced by user: 执行 Pass 2 优化的网络监控。遵循 SOP: memory/network_monitor_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集，目标 ≤3 
-- [0611_1940-0611_1942] Linux/bash env mentioned: 执行 Pass 2 优化的网络监控。遵循 SOP: memory/network_monitor_sop.md。  优化目标（相比 Pass 1）： - 单次 bash 采集，目标 ≤3 
-- [0611_1940-0611_1942] SOP referenced by user: 执行 Pass 2 优化的配置审计。遵循 SOP: memory/config_audit_sop.md。  优化目标（相比 Pass 1）： - 单次采集 + 分析，目标 ≤3 轮 - 直接写报告到
+## Phase 2+3 新增模块 (2026-06-27)
 
-- [0611_1958-0611_1959] Sandbox report output: 运行项目根目录下的配置自检工具，评估结果并写报告。  步骤： 1. code_run(python) 直接 import 并运行 config_check 模块：    ```python    im
-- [0611_1958-0611_2000] Sandbox report output: 使用 web_search 和 web_fetch 做一次真实的技术调研。  调研主题：Claude Code (Anthropic的CLI工具) 在2026年6月的最新功能和更新。  步骤： 1. 
-- [0611_1959-0611_2000] SOP referenced by user: 执行一次完整的 GenericAgent 健康检查（遵循 memory/health_check_sop.md）。  简化为一次性 bash 采集 + 分析，目标 ≤5 轮。  采集内容：
-- [0611_1959-0611_2000] Linux/bash env mentioned: 执行一次完整的 GenericAgent 健康检查（遵循 memory/health_check_sop.md）。  简化为一次性 bash 采集 + 分析，目标 ≤5 轮。  采集内容：
-- [0611_1959-0611_2000] Sandbox report output: 执行一次完整的 GenericAgent 健康检查（遵循 memory/health_check_sop.md）。  简化为一次性 bash 采集 + 分析，目标 ≤5 轮。  采集内容：
-- [0611_2011-0611_2012] Linux/bash env mentioned: 运行过期 SOP 检测器。  步骤： 1. code_run(bash) 运行: python /opt/GenericAgent\\memory\\stale_sop_check.py -
-- [0611_2011-0611_2012] Sandbox report output: 运行过期 SOP 检测器。  步骤： 1. code_run(bash) 运行: python /opt/GenericAgent\\memory\\stale_sop_check.py -
-- [0611_2010-0611_2012] SOP referenced by user: 执行一次真实的深度调研（遵循 memory/deep_research_sop.md）。  调研主题：2026年6月 AI Agent 框架的最新趋势（LangChain、AutoGPT、CrewAI
-- [0611_2010-0611_2012] Sandbox report output: 执行一次真实的深度调研（遵循 memory/deep_research_sop.md）。  调研主题：2026年6月 AI Agent 框架的最新趋势（LangChain、AutoGPT、CrewAI
-- [0611_2012-0611_2025] SOP referenced by user: 执行本周回顾（遵循 memory/weekly_review_sop.md）。  本周是 2026-06-08 到 2026-06-11（4天的高强度开发）。  采集并分析： 1. Git 活动：本周
-- [0611_2012-0611_2025] Sandbox report output: 执行本周回顾（遵循 memory/weekly_review_sop.md）。  本周是 2026-06-08 到 2026-06-11（4天的高强度开发）。  采集并分析： 1. Git 活动：本周
-- [0612_1919-0612_1921] Sandbox report output: ## 任务：自我审查 + 目标规划  ### 审查部分 请你对 GenericAgent 项目做一次全面自我审查：  1. **代码健康** — 运行 `python config_check.py`
-- [0612_1935-0612_1938] Sandbox report output: ## 任务：自主改进 GenericAgent 项目  请对 GenericAgent 项目进行全面检查和持续改进。你可以自由规划工作顺序和内容。  ### 参考材料 1. `sandbox/work
-- [0612_1939-0612_1941] Sandbox report output: ## 任务：继续改进 GenericAgent 项目（Round 2）  从 Round 1 的成果继续推进。  ### Round 1 已完成 Round 1 报告在 `sandbox/worksp
-- [0613_2041-0613_2042] Sandbox report output: 请通过 inbox 做监督链路测试：创建 /opt/GenericAgent/sandbox/reports/inbox_supervision_smoke.md，内容写明 GenericAgent 
-## Task Lessons Learned (auto)
-- [2026-06-11 20:44] round_web_search (20t): Error: , json, ssl, sys\n\n# 创建一个不验证 SSL 的 cont...)... Resolution: ！现在用 web_fetch 读取两个最关键的页面：PEP 745（发布日程）和 What's New（新特性）。
-- [2026-06-11 20:44] round_web_search (20t): Error: says `'int' object has no attribute 'startswith'` ...</summary>... Resolution: 至 ~2027-10，安全更新至 ~2030-10 |
-- [2026-06-11 20:44] round_web_search (20t): Error: 恢复\n\n| 尝试 | 动作 |\n|------|------|\n| 第 1 次 | 重试请求，切换 User-Agent |\...)... Resolution: 维护期，最新版本 **3.14.6**（昨天！2026-06-10 发布）。主要特性包括延迟注解求值、多解释器、t-strings 等。
-- [2026-06-11 20:44] round_web_search (20t): Fallback: 方案**：`code_run(python)` + urllib 直连 + `web_fetch` 成功获取所有数据
-- [2026-06-11 20:44] round_web_search (20t): Fallback: 到 `code_run(urllib)`
-- [2026-06-11 20:44] round_p2_3 (11t): Error: Action SilentlyContinue\nWrite-Output \"临时文件已清理...)...
-- [2026-06-11 20:44] round_p2_2 (4t): Error: ** | BeautifulSoup4 未安装 | 🔴 P0 — `pip install beautifulsoup4` |...
-- [2026-06-11 20:44] round_p2_1 (11t): Error: ActionPreference = \"Stop\"\n$query = [System.Web.HttpUtility]::UrlEncode(\"Clau...)... Resolution: 报告已写入sandbox/reports/p2_01_web_research.md并核验通过 | 共10轮完稿</summary>
-- [2026-06-11 20:44] round_p2_1 (11t): Error: | #2-3 | `$var:` 语法冲突（Windows PS 特性） |... Resolution: Python urllib 直连成功 | #4-7 | 从 Anthropic 官方文档获取3个来源 |
-- [2026-06-11 20:44] round_p2_1 (11t): Fallback: 用bash Invoke-WebRequest搜索</summary>
-- [2026-06-11 20:44] round_p2_1 (11t): Fallback: ×2 失败 | #2-3 | `$var:` 语法冲突（Windows PS 特性） |
-- [2026-06-11 20:44] round_final_2 (10t): Error: ChunkedEncodingError: Response ended prematurely... Resolution: 周报已写入并验证通过。90行，6节完整。任务完成。</summary>
-- [2026-06-11 20:44] round_final_1 (13t): Error: 恢复尝试1：回退bash Invoke-WebRequest搜索Bing</summary>... Resolution: bash Invoke-WebRequest搜索Bing</summary>
-- [2026-06-11 20:44] round_final_1 (13t): Error: 恢复 Step 1：web_search 全失败 → 回退 code_run(bash) Invoke-WebRequest**... Resolution: code_run(bash) Invoke-WebRequest**
-- [2026-06-11 20:44] round_final_1 (13t): Error: -handlers", "max_chars": ...)... Resolution: 直接路径验证文件存在性</summary>
-- [2026-06-11 20:44] round_final_1 (13t): Fallback: bash Invoke-WebRequest搜索Bing</summary>
-- [2026-06-11 20:44] round_final_1 (13t): Fallback: code_run(bash) Invoke-WebRequest**
-- [2026-06-11 20:44] round_final_1 (13t): Fallback: 直接路径验证文件存在性</summary>
-- [2026-06-11 20:44] round_10_daily_brief (7t): Error: due to $_ in string interpolation. ...</summary>... Resolution: ed $_ escaping)\nWrite-Output \"--- Key file verification...)
-- [2026-06-11 20:44] round_07_system_monitor (6t): Error: s/Warnings) ===\"\n    $events = Get-Wi...)... Resolution: **系统监控报告已完成并验证通过！**
-- [2026-06-11 20:44] round_07_system_monitor (6t): Error: s/warnings. Now I have all data. Let me generate the full report.... Resolution: **系统监控报告已完成并验证通过！**
-- [2026-06-11 20:44] round_05_health_check (13t): Error: Action SilentlyContinue...
-- [2026-06-11 20:44] round_05_health_check (13t): Error: Action SilentlyContinue...
-- [2026-06-11 20:44] round_05_health_check (13t): Error: Action SilentlyContinue...
-- [2026-06-11 20:44] round_05_health_check (13t): Fallback: : simple string comparison
-- [2026-06-11 20:44] round_04_memory_hygiene (7t): Fallback: `code_run('powershell', ...)` 命令
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Error: Action SilentlyContinue |...
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Error: Action SilentlyContinue).Count ) ---\"...
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Error: Action SilentlyContinue...
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Fallback: **: 若上述单次脚本超时或部分失败（如目录过大），分拆为两个子扫描：
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Fallback: 至最简扫描：仅用 `Get-ChildItem` + `Group-Object Extension` 汇总；无优化建议，仅输出原始数据供用户自行分析 |
-- [2026-06-11 20:44] round_03_file_org_sop (16t): Fallback: ' in content else '❌'} Fallback 存在\")
-- [2026-06-11 20:44] round_02_file_org (13t): Error: reading: [Errno 13] Permission denied: '/opt/GenericAgent\\temp\\round_02_file_org'... Resolution: 1 报告缺失。让我查看已有监督报告获取线索，并进一步搜索。
-- [2026-06-11 20:44] round_02_file_org (13t): Error: results[\"permission_issues\"].append(str(f.relative_to(root)))... Resolution: .lower() not in ['.md', '.py', '.txt', '.json', '.toml', '.yaml', '.yml', '.cfg', '.ini', '.html', '.css', '.js', '.png', '.jpg', '.svg', '.ico', '.ps
-- [2026-06-11 20:44] round_02_file_org (13t): Error: 后，用 `code_run` 的 `open()` 再次尝试同一个路径，得到相同错误... Resolution: 2 执行前应检查：是否有正在进行的同名 Pass 2？若有，跳过历史重放
-- [2026-06-11 20:44] round_02_file_org (13t): Fallback: 策略（当历史数据缺失时自动切换到现场扫描模式）。
-- [2026-06-11 20:44] round_01_self_check (6t): Fallback: 用 `read_proc_cmdline` |
-- [2026-06-11 20:44] code_quality_task (15t): Fallback: Python `os.walk` 遍历。
+### direction_①_data_reporting
+| 文件 | 类型 |
+|------|------|
+| nlp_query.py | Phase3 NLP查询引擎 |
+| trend_analyzer.py | Phase3 趋势异常检测 |
+| data_dashboard.py | Phase3 Flask看板:9099 |
+
+### direction_②_memory_evolution
+| 文件 | 类型 |
+|------|------|
+| build_vector_index.py | Phase2 向量索引构建 |
+| memory_search.py | Phase2 语义搜索 |
+| memory_graph.py | Phase2 关联图谱 |
+| session_tagger.py | Phase2 会话标签 |
+| memory_search_sop.md | Phase2 SOP |
+| lesson_learner.py | Phase3 经验学习 |
+| auto_sop.py | Phase3 自动SOP |
+| memory_audit.py | Phase3 记忆审计 |
+| active_learner.py | Phase3 主动学习 |
+| evolution_report.py | Phase3 进化报告 |
+| evolution_report_template.md | Phase3 报告模板 |
+| lesson_learner_sop.md | Phase3 SOP |
+
+### direction_③_qq_bot
+| 文件 | 类型 |
+|------|------|
+| qq_mode_manager.py | Phase2 模式切换 |
+| qq_context_manager.py | Phase2 上下文缓存 |
+| qq_keyword_engine.py | Phase2 关键词触发 |
+| qq_group_manager.py | Phase2 群管理 |
+| qq_mode_sop.md | Phase2 SOP |
+| qq_keyword_sop.md | Phase2 SOP |
+| report_pusher.py | Phase3 定时推送 |
+| alert_pusher.py | Phase3 告警推送 |
+| timed_messager.py | Phase3 定时消息 |
+| bot_stats_report.py | Phase3 运营看板 |
+
+### direction_④_web_automation
+| 文件 | 类型 |
+|------|------|
+| web_collector.py | Phase2 HTTP采集 |
+| web_monitor.py | Phase2 变化检测 |
+| web_push_bridge.py | Phase2 QQ推送桥接 |
+| web_collector_sop.md | Phase2 SOP |
+| web_monitor_sop.md | Phase2 SOP |
+| web_workflow.py | Phase3 多步工作流 |
+| web_workflow_sop.md | Phase3 SOP |
+| anti_anti_spider.py | Phase3 反爬基础 |
+| web_dashboard.py | Phase3 仪表盘 |

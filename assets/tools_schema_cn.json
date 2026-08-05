@@ -1,74 +1,607 @@
 [
-  {"type": "function", "function": {
-    "name": "code_run",
-    "description": "代码执行器。优先使用python。支持Multi-call，并行时用script参数。无script参数时正文代码块会被执行，单次调用优先使用以免转义。禁硬编码大量数据",
-    "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "[Optional] 要执行的代码。为免转义建议留空，改用正文代码块（与此参数互斥）"},
-      "type": {"type": "string", "enum": ["python", "powershell"], "description": "代码类型", "default": "python"},
-      "timeout": {"type": "integer", "description": "执行超时时间（秒）", "default": 60},
-      "cwd": {"type": "string", "description": "工作目录，默认为当前工作目录"},
-      "inline_eval": {"type": "boolean", "description": "不允许使用除非明确要求"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_read",
-    "description": "读取文件内容。建议在修改文件前先读取，以确保获取最新的上下文和行号。支持分页读取或关键字搜索",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "文件相对或绝对路径"},
-      "start": {"type": "integer", "description": "起始行号（从 1 开始）"},
-      "count": {"type": "integer", "description": "读取的行数", "default": 200},
-      "keyword": {"type": "string", "description": "可选搜索关键字。如果提供，将返回第一个匹配项（忽略大小写）及其周边的内容"},
-      "show_linenos": {"type": "boolean", "description": "是否显示行号，建议开启以辅助 file_patch 定位", "default": true}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_patch",
-    "description": "精细化局部文件修改。在文件中寻找唯一的 old_content 块并替换为 new_content。要求 old_content 必须在文件中唯一存在，且空格、缩进、换行必须与原文件完全一致。如果匹配失败，请使用 file_read 重新确认文件内容",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "文件路径"},
-      "old_content": {"type": "string", "description": "文件中需要被替换的原始文本块（需确保唯一性）"},
-      "new_content": {"type": "string", "description": "替换后的新文本内容。支持 {{file:路径:起始行:结束行}} 语法引用文件内容，写入前自动展开"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "file_write",
-    "description": "用于文件的新建、全量覆盖或追加写入。对于精细的代码修改，应优先使用 file_patch。写入内容支持 {{file:路径:起始行:结束行}} 语法引用文件片段，写入前自动展开",
-    "parameters": {"type": "object", "properties": {
-      "path": {"type": "string", "description": "文件路径"},
-      "content": {"type": "string"},
-      "mode": {"type": "string", "enum": ["overwrite", "append", "prepend"], "description": "写入模式覆盖、追加或在开头追加", "default": "overwrite"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_scan",
-    "description": "获取当前页面的简化HTML内容和标签页列表。会移除隐藏/浮动/被遮盖的元素。切换页面后一般应先调用查看",
-    "parameters": {"type": "object", "properties": {
-      "tabs_only": {"type": "boolean", "description": "仅返回标签页列表和当前标签信息，不获取HTML内容"},
-      "switch_tab_id": {"type": "string", "description": "可选的标签页 ID。如果提供，系统将在扫描前切换到该标签页"},
-      "text_only": {"type": "boolean", "description": "只要纯文本不要HTML"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "web_execute_js",
-    "description": "执行JS。支持Multi-call，用不同switch_tab_id并行操作多标签页。禁止猜测，准确操作以减少 web_scan 调用。无script参数时执行正文 ```javascript 块，以免转义",
-    "parameters": {"type": "object", "properties": {
-      "script": {"type": "string", "description": "[Optional] JS代码或路径。为免转义建议留空，改用正文代码块（与此参数互斥）"},
-      "save_to_file": {"type": "string", "description": "结果存文件，适合返回值较长时"},
-      "no_monitor": {"type": "boolean", "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置"},
-      "switch_tab_id": {"type": "string", "description": "可选的标签页 ID，切换到该标签页执行"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "update_working_checkpoint",
-    "description": "短期工作便签，每轮自动注入上下文，防长任务信息丢失。前中期调用，非结束时。何时调用：(1)任务开始读SOP后，存用户需求和关键约束/参数（简单1-2步任务除外）；(2)子任务切换或上下文即将被冲刷前；(3)多次重试失败后，重读SOP并必须调用存储新发现；(4)切换新任务时更新内容，清旧进度但保留仍有效的约束。\n\n何时不调用：简单任务（1-2步且无严重约束）、任务已完成时（应当用长期结算工具）",
-    "parameters": {"type": "object", "properties": {
-      "key_info": {"type": "string", "description": "替换当前便签（<200 tokens）。增量更新：先回顾现有内容，保留仍有效的，再增删改。存：要避的坑、用户原始需求、关键参数/发现、文件路径、当前进度、下一步计划。不存：马上要用用完即丢的、上下文中显而易见的、用户已换全新任务时的旧任务信息。宁多更新不丢关键"},
-      "related_sop": {"type": "string", "description": "相关sop名称，可以多个，必要时需要再读"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "ask_user",
-    "description": "当需要用户决策、提供额外信息或遇到无法自动解决的阻碍时，调用此工具中断任务并提问",
-    "parameters": {"type": "object", "properties": {
-      "question": {"type": "string", "description": "向用户提出的明确问题"},
-      "candidates": {"type": "array", "items": {"type": "string"}, "description": "提供给用户的可选快捷选项列表"}}}
-  }},
-  {"type": "function", "function": {
-    "name": "start_long_term_update",
-    "description": "准备开始提炼记忆。发现值得长期记忆的信息（环境事实/用户偏好/避坑经验）时调用此工具。已记忆更新或在自主流程内时无需调用。超15轮完成的任务必须调用以沉淀经验",
-    "parameters": {"type": "object", "properties": {}}}
+  {
+    "type": "function",
+    "function": {
+      "name": "code_run",
+      "description": "沙箱化代码执行器，优先使用 python；写入仅限普通写入根。禁止用 code_run 修改记忆，也不要把它的只读错误理解为整个记忆系统不可写：用户明确批准后，已有合格顶层记忆文本用 file_patch，新建顶层 memory .md 用 file_write；记忆代码、JSON、备份、嵌套路径、L4、删除和移动仍需管理员处理。支持 Multi-call；无 script 参数时执行正文代码块。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "[Optional] 要执行的代码。为免转义建议留空，改用正文代码块（与此参数互斥）"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "python",
+              "bash",
+              "powershell"
+            ],
+            "description": "代码类型",
+            "default": "python"
+          },
+          "timeout": {
+            "type": "integer",
+            "description": "执行超时时间（秒）",
+            "default": 120
+          },
+          "cwd": {
+            "type": "string",
+            "description": "工作目录，默认为当前工作目录"
+          },
+          "inline_eval": {
+            "type": "boolean",
+            "description": "不允许使用除非明确要求"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "host"
+            ],
+            "description": "sandbox（默认）: bwrap 隔离执行；host: 宿主机直接执行，用于服务器管理（仅支持 bash，操作记录到 temp/admin_ops.log）",
+            "default": "sandbox"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_read",
+      "description": "读取文件内容。建议在修改文件前先读取，以确保获取最新的上下文和行号。支持分页读取或关键字搜索",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "文件相对或绝对路径"
+          },
+          "start": {
+            "type": "integer",
+            "description": "起始行号（从 1 开始）"
+          },
+          "count": {
+            "type": "integer",
+            "description": "读取的行数",
+            "default": 200
+          },
+          "keyword": {
+            "type": "string",
+            "description": "可选搜索关键字。如果提供，将返回第一个匹配项（忽略大小写）及其周边的内容"
+          },
+          "show_linenos": {
+            "type": "boolean",
+            "description": "是否显示行号，建议开启以辅助 file_patch 定位",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_patch",
+      "description": "精细化局部文件修改。在文件中寻找唯一的 old_content 块并替换。配置 GENERICAGENT_MEMORY_ROOT 后，交互调用仍需用户明确批准；隐藏的 memory-only 完成结算可对已验证事实免重复确认。仅可 patch 已有顶层 memory .md 及 L1/L2 文本；密钥、脚本、嵌套路径和 L4 仍禁止。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "文件路径"
+          },
+          "old_content": {
+            "type": "string",
+            "description": "文件中需要被替换的原始文本块（需确保唯一性）"
+          },
+          "new_content": {
+            "type": "string",
+            "description": "替换后的新文本内容。支持 {{file:路径:起始行:结束行}} 语法引用文件内容，写入前自动展开"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "file_write",
+      "description": "用于普通写入根内的新建、覆盖或追加。对于 GENERICAGENT_MEMORY_ROOT，只可用 overwrite 模式新建顶层 .md，绝不允许覆盖或追加已有记忆。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "文件路径"
+          },
+          "content": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "overwrite",
+              "append",
+              "prepend"
+            ],
+            "description": "写入模式覆盖、追加或在开头追加",
+            "default": "overwrite"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_scan",
+      "description": "获取当前页面的简化HTML内容和标签页列表。会移除隐藏/浮动/被遮盖的元素。切换页面后一般应先调用查看",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "tabs_only": {
+            "type": "boolean",
+            "description": "仅返回标签页列表和当前标签信息，不获取HTML内容"
+          },
+          "switch_tab_id": {
+            "type": "string",
+            "description": "可选的标签页 ID。如果提供，系统将在扫描前切换到该标签页"
+          },
+          "text_only": {
+            "type": "boolean",
+            "description": "只要纯文本不要HTML"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_execute_js",
+      "description": "执行JS。支持Multi-call，用不同switch_tab_id并行操作多标签页。禁止猜测，准确操作以减少 web_scan 调用。无script参数时执行正文 ```javascript 块，以免转义",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "[Optional] JS代码或路径。为免转义建议留空，改用正文代码块（与此参数互斥）"
+          },
+          "save_to_file": {
+            "type": "string",
+            "description": "结果存文件，适合返回值较长时"
+          },
+          "no_monitor": {
+            "type": "boolean",
+            "description": "跳过页面变更监控，省2-3秒。仅在纯读取信息时设置，页面操作时不要设置"
+          },
+          "switch_tab_id": {
+            "type": "string",
+            "description": "可选的标签页 ID，切换到该标签页执行"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "update_working_checkpoint",
+      "description": "短期工作便签，每轮自动注入上下文，防长任务信息丢失。前中期调用，非结束时。何时调用：(1)任务开始读SOP后，存用户需求和关键约束/参数（简单1-2步任务除外）；(2)子任务切换或上下文即将被冲刷前；(3)多次重试失败后，重读SOP并必须调用存储新发现；(4)切换新任务时更新内容，清旧进度但保留仍有效的约束。\n\n何时不调用：简单任务（1-2步且无严重约束）、任务已完成时（应当用长期结算工具）",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key_info": {
+            "type": "string",
+            "description": "替换当前便签（<200 tokens）。增量更新：先回顾现有内容，保留仍有效的，再增删改。存：要避的坑、用户原始需求、关键参数/发现、文件路径、当前进度、下一步计划。不存：马上要用用完即丢的、上下文中显而易见的、用户已换全新任务时的旧任务信息。宁多更新不丢关键"
+          },
+          "related_sop": {
+            "type": "string",
+            "description": "相关sop名称，可以多个，必要时需要再读"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "ask_user",
+      "description": "当需要用户决策、提供额外信息或遇到无法自动解决的阻碍时，调用此工具中断任务并提问",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "向用户提出的明确问题"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "提供给用户的可选快捷选项列表"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_long_term_update",
+      "description": "准备开始提炼记忆。发现值得长期记忆的信息（环境事实/用户偏好/避坑经验）时调用此工具。已记忆更新或在自主流程内时无需调用。超15轮完成的任务必须调用以沉淀经验",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_search",
+      "description": "通过多个搜索后端（DuckDuckGo/Bing 自动回退）搜索网络，返回标题、URL 和摘要。用于事实核查、时事、文档和错误研究。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query string. Be specific — include version numbers, dates, or error codes when relevant."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Max results to return (1-15)",
+            "default": 8
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "duckduckgo",
+              "bing"
+            ],
+            "description": "Search source (auto=try duckduckgo, fallback bing)",
+            "default": "auto"
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "web_fetch",
+      "description": "获取 URL 并提取可读文本；支持通过 save_to_file 保存完整内容。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Full URL to fetch (must include https://)"
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Max characters to return (default 6000, max 15000)",
+            "default": 6000
+          },
+          "save_to_file": {
+            "type": "string",
+            "description": "[Optional] If set, saves full content to this file path for later reading",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "jmcomic_download",
+      "description": "从禁漫天堂(JMComic)下载漫画本子。传入漫画的车号(album_id)即可下载全部章节图片。下载完成后返回[FILE:path]引用供后续使用。图片会被下载到temp/jmcomic/目录。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "禁漫天堂漫画的车号/album_id，例如 123456"
+          }
+        },
+        "required": [
+          "album_id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "doc_edit",
+      "description": "读写编辑 Office 文档。支持 .docx（含标题/段落/表格/格式）和 .xlsx（电子表格）。用于写报告、做表格、改合同等文书工作。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "read",
+              "create",
+              "edit"
+            ],
+            "description": "操作类型: read=读取文档, create=创建文档, edit=编辑现有文档"
+          },
+          "path": {
+            "type": "string",
+            "description": "文件路径（create时是输出路径）"
+          },
+          "title": {
+            "type": "string",
+            "description": "[create] 文档标题"
+          },
+          "content": {
+            "type": "array",
+            "description": "[create] 文档内容结构。每项: {\"type\":\"heading\",\"text\":\"...\",\"level\":1} | {\"type\":\"paragraph\",\"text\":\"...\",\"bold\":false} | {\"type\":\"table\",\"headers\":[...],\"rows\":[[...]]} | {\"type\":\"page_break\"}",
+            "items": {
+              "type": "object"
+            }
+          },
+          "operations": {
+            "type": "array",
+            "description": "[edit] 编辑操作。每项: {\"op\":\"append_paragraph\",\"text\":\"...\"} | {\"op\":\"append_heading\",\"text\":\"...\",\"level\":2} | {\"op\":\"replace_text\",\"old\":\"...\",\"new\":\"...\"} | {\"op\":\"append_table\",\"headers\":[...],\"rows\":[[...]]}",
+            "items": {
+              "type": "object"
+            }
+          },
+          "sheet": {
+            "type": "string",
+            "description": "[xlsx] 工作表名（可选）"
+          }
+        },
+        "required": [
+          "action",
+          "path"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "spawn_subagent",
+      "description": "创建子代理执行并行任务。子代理拥有独立 LLM 上下文和完整工具集，完成后结果可通过 collect_subagent 获取。子代理间可通过文件共享数据（写入 temp/ 互相读取）。适合搜索/代码/文档等耗时任务。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "子代理的任务描述（作为 user prompt 输入）"
+          },
+          "max_turns": {
+            "type": "integer",
+            "description": "最大执行轮次（默认 30）",
+            "default": 30
+          }
+        },
+        "required": [
+          "task"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "list_subagents",
+      "description": "列出所有子代理及其状态。返回每个子代理的 ID、存活状态、进度、轮次等信息。",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "talk_subagent",
+      "description": "向运行中的子代理发送消息。用于指导子代理、追加需求或纠正方向。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "子代理 ID"
+          },
+          "message": {
+            "type": "string",
+            "description": "要发送的消息"
+          }
+        },
+        "required": [
+          "id",
+          "message"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "collect_subagent",
+      "description": "收集已结束的子代理结果。仅对已完成的子代理有效。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "子代理 ID"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "mcp_call",
+      "description": "调用外部 MCP 服务器的工具。默认拒绝；仅允许 GENERICAGENT_MCP_ALLOWLIST 中的 server/tool 或 server/*。需要服务器已配置在 mcp_cli 中。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "server": {
+            "type": "string",
+            "description": "MCP 服务器名称（如 github、postgres、docker）"
+          },
+          "tool": {
+            "type": "string",
+            "description": "工具名称（如 create_issue、query、list_containers）"
+          },
+          "args": {
+            "type": "object",
+            "description": "工具参数，key-value 形式",
+            "default": {}
+          }
+        },
+        "required": [
+          "server",
+          "tool"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "skill_propose",
+      "description": "提交 Markdown Skill 提案等待明确批准；不会直接启用或修改 Skill。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "安全的小写 Skill 名称"
+          },
+          "content": {
+            "type": "string",
+            "description": "完整 Markdown SKILL.md 内容"
+          },
+          "reason": {
+            "type": "string",
+            "description": "为何应把该流程沉淀为 Skill"
+          }
+        },
+        "required": [
+          "name",
+          "content",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "source_change_propose",
+      "description": "为源码、配置、依赖树或仓库文本生成精确替换提案，等待 QQ 明确授权；本工具绝不直接写目标文件。服务器会按风险分级，并绑定精确路径、修改前后哈希、审批人身份和有效期。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "目标文件的精确路径"
+          },
+          "old_content": {
+            "type": "string",
+            "description": "必须唯一匹配的现有文本"
+          },
+          "new_content": {
+            "type": "string",
+            "description": "精确替换文本"
+          },
+          "reason": {
+            "type": "string",
+            "description": "面向用户的变更目的"
+          }
+        },
+        "required": [
+          "path",
+          "old_content",
+          "new_content",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_search",
+      "description": "检索持久会话历史。结果始终限制在当前平台、账号和会话内，不会泄露其他会话。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "要检索的中英文短语，至少3个字符"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "最大结果数，1-20",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "qq_group_op",
+      "description": "QQ 群管理操作。默认禁用；仅当 GENERICAGENT_QQ_ADMIN_ENABLED 设置为 1/true/yes/on 时启用。可禁言、解禁、踢人、发群公告。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "ban",
+              "unban",
+              "kick",
+              "notice"
+            ],
+            "description": "操作类型: ban=禁言, unban=解禁, kick=踢出群, notice=发群公告"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "[ban/unban/kick] 目标用户 QQ 号"
+          },
+          "group_id": {
+            "type": "string",
+            "description": "群号"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "[ban] 禁言时长（秒），默认600",
+            "default": 600
+          },
+          "text": {
+            "type": "string",
+            "description": "[notice] 公告内容"
+          }
+        },
+        "required": [
+          "op",
+          "group_id"
+        ]
+      }
+    }
   }
 ]

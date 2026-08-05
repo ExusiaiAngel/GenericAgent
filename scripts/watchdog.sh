@@ -29,72 +29,19 @@ ensure_port_guard() {
     fi
 }
 
-onebot_ok() {
-    cd "$ROOT" || return 1
-    "$PY" - <<'PY' >/dev/null 2>&1
-import asyncio, json, time
-import aiohttp
-async def main():
-    async with aiohttp.ClientSession() as s:
-        async with s.ws_connect('ws://127.0.0.1:3001/ws', timeout=8) as ws:
-            echo='watchdog_'+str(int(time.time()*1000))
-            await ws.send_json({'action':'get_status','params':{},'echo':echo})
-            deadline=time.time()+8
-            while time.time()<deadline:
-                msg=await ws.receive(timeout=max(0.1, deadline-time.time()))
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data=json.loads(msg.data)
-                    if data.get('echo') == echo:
-                        d=data.get('data') or {}
-                        raise SystemExit(0 if d.get('online') and d.get('good') else 2)
-                elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
-                    raise SystemExit(3)
-            raise SystemExit(4)
-asyncio.run(main())
-PY
-}
-
 ensure_port_guard
 ensure_svc genericagent 'Scheduler'
-ensure_svc genericagent-qq 'QQ/NapCat runtime'
-ensure_svc genericagent-napcat 'NapCat frontend'
+ensure_svc genericagent-tg 'Telegram frontend'
 
-if ! onebot_ok; then
-    log 'OneBot get_status failed, restarting QQ runtime and NapCat frontend...'
-    systemctl restart genericagent-qq >>"$LOG" 2>&1
-    sleep 10
-    systemctl restart genericagent-napcat >>"$LOG" 2>&1
-    sleep 5
-    if onebot_ok; then log 'OneBot recovered'; else log 'OneBot still unhealthy after restart'; fi
-fi
-
-if ss -ltnp 2>/dev/null | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):3001|(^|[[:space:]])(0\.0\.0\.0|\*):6099'; then
-    log 'SECURITY: NapCat port bound publicly; restarting QQ runtime to reload local-only config'
-    systemctl restart genericagent-qq >>"$LOG" 2>&1
-fi
-
-LOG_FILE=$ROOT/frontends/temp/napcat_qqapp.log
+LOG_FILE=$ROOT/frontends/temp/tgapp.log
 if [ -f "$LOG_FILE" ]; then
     CUR_TS=$(date +%s 2>/dev/null)
     FILE_TS=$(stat -c %Y "$LOG_FILE" 2>/dev/null)
     if [ -n "${CUR_TS:-}" ] && [ -n "${FILE_TS:-}" ]; then
         AGE=$((CUR_TS - FILE_TS))
-        if [ "$AGE" -gt 600 ]; then
-            log "WARNING: napcat log stale (${AGE}s)"
+        if [ "$AGE" -gt 3600 ]; then
+            log "WARNING: tgapp log stale (${AGE}s)"
         fi
-    fi
-fi
-
-# ── Daily QQ restart at 4 AM to free memory ──
-HOUR=$(date +%H)
-if [ "$HOUR" = "04" ]; then
-    MIN=$(date +%M)
-    if [ "$MIN" -lt 10 ]; then  # restart once within 04:00-04:09 window
-        log "Daily QQ restart (scheduled 4am)"
-        systemctl restart genericagent-qq >>"$LOG" 2>&1
-        sleep 10
-        systemctl restart genericagent-napcat >>"$LOG" 2>&1
-        log "Daily restart complete"
     fi
 fi
 

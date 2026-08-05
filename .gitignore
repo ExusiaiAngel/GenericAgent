@@ -189,3 +189,12 @@ sandbox/
 
 # Auto-generated stats (never track)
 memory/file_access_stats.json
+# Legacy QQ frontend removed + one-off probe/cleanup scripts
+napcat_qqapp.py
+cleanup_napcat_legacy_config.py
+genericagent-napcat-runtime.conf
+live_acceptance_probe.py
+scheduler_write_probe.py
+secret_residue_audit.py
+runtime.conf
+sub_agent.py

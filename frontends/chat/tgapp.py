@@ -16,6 +16,7 @@ from frontends.shared.chatapp_common import (
     FILE_HINT,
     HELP_TEXT,
     TELEGRAM_MENU_COMMANDS,
+    _extract_final_answer,
     clean_reply,
     ensure_single_instance,
     extract_files,
@@ -476,7 +477,7 @@ class _TelegramStreamSession:
         self.last_update_raw_len = len(self.raw_text)
 
     def _stream_display(self, text):
-        base = (text or _DRAFT_HINT).strip() or _DRAFT_HINT
+        base = _extract_final_answer(text or "") or _DRAFT_HINT
         safe_parts = _markdown_safe_segments(base)
         base = safe_parts[-1] if safe_parts else _DRAFT_HINT
         if base == _DRAFT_HINT:
@@ -528,7 +529,7 @@ class _TelegramStreamSession:
 
     async def _refresh(self, done, send_files):
         summary = _extract_turn_summary(self.raw_text)
-        cleaned = clean_reply(self.raw_text) if self.raw_text.strip() else ""
+        cleaned = _extract_final_answer(self.raw_text) if self.raw_text.strip() else ""
         self.files = _files_from_text(cleaned)
         body = _inject_turn_summary(_render_file_markers(cleaned), summary)
         if done and not body and self.files:

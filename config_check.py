@@ -6,7 +6,8 @@ Run: python config_check.py [--json]
 
 Exit codes: 0=all pass, 1=warnings, 2=errors.
 """
-import os, sys, json, argparse
+import os, sys, json, argparse, subprocess, tempfile, re
+from pathlib import Path
 
 # Detect project root: walk up until we find pyproject.toml
 _P = os.path.dirname(os.path.abspath(__file__))
@@ -16,6 +17,38 @@ for _ in range(5):
         break
     PROJECT_ROOT = os.path.dirname(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
+
+
+def load_private_env(path, environ=None):
+    """Load simple KEY=VALUE entries without exposing or overriding secrets."""
+    target = os.environ if environ is None else environ
+    loaded = []
+    env_path = Path(path)
+    if not env_path.is_file():
+        return tuple(loaded)
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name, value = name.strip(), value.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if name not in target:
+            target[name] = value
+            loaded.append(name)
+    return tuple(loaded)
+
+
+# systemd reads this file for the service; the standalone validator must do so too.
+# Names may be reported by tests, but values are never printed here.
+PRIVATE_ENV_NAMES = load_private_env(Path(PROJECT_ROOT) / ".env")
 
 CHECKS = []
 
@@ -77,12 +110,38 @@ def check_ga():
 
 @check("Agent instantiation", "imports")
 def check_agent():
+    """Instantiate the runtime in an isolated process.
+
+    GenericAgent initialization may start watchdog threads and provider clients.
+    Keeping those side effects in the validator process made config_check hang
+    after it had already completed its checks.
+    """
+    code = (
+        "from agentmain import GenericAgent\n"
+        "agent = GenericAgent(start_watchdog=False)\n"
+        "print(type(agent).__name__, flush=True)\n"
+        "import os\n"
+        "os._exit(0)\n"
+    )
     try:
-        from agentmain import GenericAgent
-        a = GenericAgent()
-        return "pass", f"GenericAgent ({type(a).__name__})"
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=0x08000000 if os.name == 'nt' else 0,
+        )
+    except subprocess.TimeoutExpired:
+        return "fail", "GenericAgent initialization timed out after 20s"
     except Exception as e:
-        return "fail", str(e)
+        return "fail", f"Cannot run isolated check: {e}"
+
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "no output").strip().splitlines()
+        return "fail", details[-1][:200]
+    name = next((line.strip() for line in reversed(result.stdout.splitlines()) if line.strip()), "GenericAgent")
+    return "pass", f"GenericAgent ({name})"
 
 
 # ── API Key Config ───────────────────────────────────────────────────
@@ -100,7 +159,7 @@ def check_mykey_exists():
 def check_api_key():
     key = os.environ.get('DEEPSEEK_API_KEY', '')
     if key and key.startswith('sk-'):
-        return "pass", f"DEEPSEEK_API_KEY set (masked: sk-...{key[-4:]})"
+        return "pass", "DEEPSEEK_API_KEY configured"
     elif key:
         return "warn", "DEEPSEEK_API_KEY set but doesn't start with 'sk-'"
     # Check mykey_local.py
@@ -114,8 +173,8 @@ def check_api_key():
 def check_proxy():
     proxy = os.environ.get('GENERICAGENT_PROXY', '')
     if proxy:
-        return "pass", proxy
-    return "warn", "No proxy set — API calls may fail on restricted networks"
+        return "pass", "GENERICAGENT_PROXY configured"
+    return "pass", "Direct network mode (no proxy configured)"
 
 
 # ── Toolchain ────────────────────────────────────────────────────────
@@ -173,6 +232,48 @@ def check_web_search():
         return "warn", f"No results — {r.get('msg', 'unknown error')[:100]}"
     except Exception as e:
         return "warn", str(e)[:100]
+
+
+@check("code_run sandbox", "tools")
+def check_code_run_sandbox():
+    if os.name == "nt":
+        return "warn", "Bubblewrap integration is Linux-only"
+    try:
+        from ga import code_run
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            allowed = root / "allowed"
+            outside = root / "outside.txt"
+            allowed.mkdir()
+            old_roots = os.environ.get("GENERICAGENT_WRITE_ROOTS")
+            os.environ["GENERICAGENT_WRITE_ROOTS"] = str(allowed)
+            try:
+                runner = code_run(
+                    f"printf denied > {outside}",
+                    "bash",
+                    timeout=10,
+                    cwd=str(root),
+                    myprint=lambda *args, **kwargs: None,
+                )
+                while True:
+                    try:
+                        next(runner)
+                    except StopIteration as stopped:
+                        result = stopped.value
+                        break
+            finally:
+                if old_roots is None:
+                    os.environ.pop("GENERICAGENT_WRITE_ROOTS", None)
+                else:
+                    os.environ["GENERICAGENT_WRITE_ROOTS"] = old_roots
+            if outside.exists():
+                return "fail", "Bubblewrap allowed a write outside configured roots"
+            if result.get("status") != "error":
+                return "fail", f"Write denial returned {result}"
+        return "pass", "Bubblewrap denied outside-root write"
+    except Exception as e:
+        return "fail", str(e)[:160]
 
 
 # ── Memory System ────────────────────────────────────────────────────

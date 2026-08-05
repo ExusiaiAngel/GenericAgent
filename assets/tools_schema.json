@@ -3,7 +3,7 @@
     "type": "function",
     "function": {
       "name": "code_run",
-      "description": "Code executor. Supports python/bash. Prefer Python. For multi-step tasks, write one complete Python script instead of multiple tool calls — saves 50%+ tokens. Also supports bash/sh/shell. Reply code block executed if no script arg.",
+      "description": "Sandboxed code executor. Supports python/bash; prefer Python. Writes are limited to configured normal write roots. Do not use code_run to modify memory and do not interpret its read-only error as proof that all memory is immutable: after explicit user approval, use file_patch for eligible existing top-level memory text or file_write to create a new top-level memory .md. Protected memory code, JSON, backups, nested paths, L4, deletion, and moves still require administrator handling. For multi-step tasks, prefer one complete script. Reply code block is executed if no script arg.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -33,6 +33,15 @@
           "inline_eval": {
             "type": "boolean",
             "description": "DO NOT USE except explicitly specified."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "sandbox",
+              "host"
+            ],
+            "description": "sandbox (default): bubblewrap-isolated execution; host: run directly on the server for admin tasks (bash only, audited in temp/admin_ops.log)",
+            "default": "sandbox"
           }
         }
       }
@@ -76,7 +85,7 @@
     "type": "function",
     "function": {
       "name": "file_patch",
-      "description": "Replace unique old_content with new_content. Exact match required (whitespace/indentation). On failure, file_read to recheck",
+      "description": "Replace unique old_content with new_content. Exact match required. With GENERICAGENT_MEMORY_ROOT, interactive calls require explicit approval; the hidden memory-only completion broker may patch verified facts without asking again. Only existing top-level memory .md plus L1/L2 text are eligible; secrets, scripts, nested paths, and L4 stay denied.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -100,7 +109,7 @@
     "type": "function",
     "function": {
       "name": "file_write",
-      "description": "Create/overwrite/append files. HUGE edits ONLY. Supports {{file:path:startLine:endLine}}, auto-expanded",
+      "description": "Create/overwrite/append files inside normal write roots. Under GENERICAGENT_MEMORY_ROOT it may only create a new top-level .md in overwrite mode; it can never replace or append existing memory.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -196,7 +205,11 @@
           },
           "source": {
             "type": "string",
-            "enum": ["auto", "duckduckgo", "bing"],
+            "enum": [
+              "auto",
+              "duckduckgo",
+              "bing"
+            ],
             "description": "Search source (auto=try duckduckgo, fallback bing)",
             "default": "auto"
           }
@@ -436,7 +449,7 @@
     "type": "function",
     "function": {
       "name": "mcp_call",
-      "description": "调用外部 MCP 服务器的工具。用于对接社区 10000+ 现成 MCP 服务（GitHub、Slack、Docker、数据库等）。需要服务器已配置在 mcp_cli 中。",
+      "description": "调用外部 MCP 服务器的工具。默认拒绝；仅允许 GENERICAGENT_MCP_ALLOWLIST 中的 server/tool 或 server/*。需要服务器已配置在 mcp_cli 中。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -464,14 +477,106 @@
   {
     "type": "function",
     "function": {
+      "name": "skill_propose",
+      "description": "Stage a Markdown Skill proposal for explicit approval. This never activates or modifies a Skill directly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Safe lowercase Skill slug"
+          },
+          "content": {
+            "type": "string",
+            "description": "Complete Markdown SKILL.md content"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this reusable workflow should become a Skill"
+          }
+        },
+        "required": [
+          "name",
+          "content",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "source_change_propose",
+      "description": "Stage an exact source, configuration, dependency-tree, or repository text replacement for explicit QQ approval. This never writes the target. The server classifies risk and binds approval to the exact path, before/after hashes, approver identity, and expiry.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Exact target file path"
+          },
+          "old_content": {
+            "type": "string",
+            "description": "Unique existing text to replace"
+          },
+          "new_content": {
+            "type": "string",
+            "description": "Exact replacement text"
+          },
+          "reason": {
+            "type": "string",
+            "description": "User-facing purpose of this change"
+          }
+        },
+        "required": [
+          "path",
+          "old_content",
+          "new_content",
+          "reason"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "session_search",
+      "description": "Search durable conversation history. Results are always scoped to the current platform/account/conversation and never expose another conversation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Chinese or English phrase to find (minimum 3 characters)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum results, 1-20",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "qq_group_op",
-      "description": "QQ 群管理操作。可禁言、解禁、踢人、发群公告。需要知道群号(group_id)和用户QQ号(user_id)。禁言时间(duration)单位为秒，默认600秒。",
+      "description": "QQ 群管理操作。默认禁用；仅当 GENERICAGENT_QQ_ADMIN_ENABLED 设置为 1/true/yes/on 时启用。可禁言、解禁、踢人、发群公告。",
       "parameters": {
         "type": "object",
         "properties": {
           "op": {
             "type": "string",
-            "enum": ["ban", "unban", "kick", "notice"],
+            "enum": [
+              "ban",
+              "unban",
+              "kick",
+              "notice"
+            ],
             "description": "操作类型: ban=禁言, unban=解禁, kick=踢出群, notice=发群公告"
           },
           "user_id": {

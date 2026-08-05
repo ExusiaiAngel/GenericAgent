@@ -29,7 +29,7 @@ def reload_mykeys():
         print(f'[Info] Load mykeys from {_mykey_path}')
         globals().update(mykeys=mk)
         return mk, True
-    except: return globals().get('mykeys', {}), False
+    except Exception: return globals().get('mykeys', {}), False
 
 def __getattr__(name):  # once guard in PEP 562
     if name == 'mykeys': return reload_mykeys()[0]
@@ -194,13 +194,13 @@ def _try_parse_tool_args(raw):
     Returns list of parsed dicts."""
     if not raw: return [{}]
     try: return [json.loads(raw)]
-    except: pass
+    except json.JSONDecodeError: pass
     parts = re.split(r'(?<=\})(?=\{)', raw)
     if len(parts) > 1:
         parsed = []
         for p in parts:
             try: parsed.append(json.loads(p))
-            except: return [{"_raw": raw}]
+            except json.JSONDecodeError: return [{"_raw": raw}]
         return parsed
     return [{"_raw": raw}]
 
@@ -219,7 +219,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             data_str = line[5:].lstrip()
             if data_str == "[DONE]": break
             try: evt = json.loads(data_str)
-            except: continue
+            except json.JSONDecodeError: continue
             etype = evt.get("type", "")
             if etype == "response.output_text.delta":
                 delta = evt.get("delta", "")
@@ -268,7 +268,7 @@ def _parse_openai_sse(resp_lines, api_mode="chat_completions"):
             data_str = line[5:].lstrip()
             if data_str == "[DONE]": break
             try: evt = json.loads(data_str)
-            except: continue
+            except json.JSONDecodeError: continue
             ch = (evt.get("choices") or [{}])[0]
             delta = ch.get("delta") or {}
             if delta.get("reasoning_content"):
@@ -325,7 +325,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
                         blocks.append({"type": "text", "text": p["text"]}); yield p["text"]
             elif item.get("type") == "function_call":
                 try: args = json.loads(item.get("arguments", "")) if item.get("arguments") else {}
-                except: args = {"_raw": item.get("arguments", "")}
+                except json.JSONDecodeError: args = {"_raw": item.get("arguments", "")}
                 blocks.append({"type": "tool_use", "id": item.get("call_id", item.get("id", "")),
                                "name": item.get("name", ""), "input": args})
     else:
@@ -340,7 +340,7 @@ def _parse_openai_json(data, api_mode="chat_completions"):
         for tc in (msg.get("tool_calls") or []):
             fn = tc.get("function", {})
             try: args = json.loads(fn.get("arguments", "")) if fn.get("arguments") else {}
-            except: args = {"_raw": fn.get("arguments", "")}
+            except json.JSONDecodeError: args = {"_raw": fn.get("arguments", "")}
             blocks.append({"type": "tool_use", "id": tc.get("id", ""), "name": fn.get("name", ""), "input": args})
     return blocks
 
@@ -361,7 +361,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
     _RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529}
     def _delay(resp, attempt):
         try: ra = float((resp.headers or {}).get("retry-after"))
-        except: ra = None
+        except (ValueError, TypeError): ra = None
         return max(0.5, ra if ra is not None else min(30.0, 1.5 * (2 ** attempt)))
     for attempt in range(sess.max_retries + 1):
         streamed = False
@@ -374,7 +374,7 @@ def _stream_with_retry(sess, url, headers, payload, parse_fn):
                         print(f"[LLM Retry] HTTP {r.status_code}, retry in {d:.1f}s ({attempt+1}/{sess.max_retries+1})")
                         time.sleep(d); continue
                     try: body = r.text.strip()[:500]
-                    except: body = ""
+                    except (UnicodeDecodeError, AttributeError): body = ""
                     err = f"!!!Error: HTTP {r.status_code}" + (f": {body}" if body else "")
                     yield err; return [{"type": "text", "text": err}]
                 gen = parse_fn(r)
@@ -520,12 +520,17 @@ class BaseSession:
         self.api_key = cfg['apikey']
         self.api_base = cfg['apibase'].rstrip('/')
         self.model = cfg.get('model', '')
-        default_context_win = 30000
+        default_context_win = 30000; default_cut_msg_interval = 5
         if 'deepseek' in self.model.lower():
-            default_context_win = 70000; self.cut_msg_interval = 25; self.trim_keep_rate = 0.3
+            default_context_win = 70000; default_cut_msg_interval = 25; self.trim_keep_rate = 0.3
         self.context_win = cfg.get('context_win', default_context_win)
+        self.maxlen_multiplier = min(
+            max(self.context_win / default_context_win * 0.85, 1.0), 3.0
+        )
+        self.cut_msg_interval = int(default_cut_msg_interval * self.maxlen_multiplier)
         self.history = []; self.lock = threading.Lock(); self.system = ""
         self.name = cfg.get('name', self.model)
+        self.capabilities = frozenset(cfg.get('capabilities') or {'text', 'tools'})
         proxy = cfg.get('proxy'); 
         self.proxies = {"http": proxy, "https": proxy} if proxy else None
         self.max_retries = max(0, int(cfg.get('max_retries', 4)))
@@ -868,7 +873,9 @@ Follow these steps to think and act:
                 except json.JSONDecodeError:
                     errors.append(f'Failed to parse tool_use JSON: {json_str[:200]}')
                     self.last_tools = ''
-                except: pass
+                except Exception as e:
+                    errors.append(f'Unexpected error parsing tool_use block: {e}')
+                    self.last_tools = ''
             if not tool_calls:
                 for e in errors:
                     print(f"[Warn] {e}"); tool_calls.append(MockToolCall('bad_json', {'msg': e}))
@@ -884,7 +891,7 @@ def _parse_text_tool_calls(content):
             idx = content.index(_jp); raw = json.loads(content[idx:])
             tcs = [MockToolCall(b["name"], b.get("input", {}), id=b.get("id", "")) for b in raw if b.get("type") == "tool_use"]
             return tcs, content[:idx].strip()
-        except: pass
+        except (json.JSONDecodeError, KeyError, IndexError): pass
     # try XML tags: <tool_call>{"name":..., "arguments":...}</tool_call>
     _xp = r"<(?:tool_use|tool_call)>((?:(?!<(?:tool_use|tool_call)>).){15,}?)</(?:tool_use|tool_call)>"
     for s in re.findall(_xp, content, re.DOTALL):
@@ -892,7 +899,7 @@ def _parse_text_tool_calls(content):
             d = tryparse(s.strip()); name = d.get('name')
             args = d.get('arguments') or d.get('args') or d.get('input') or {}
             if name: tcs.append(MockToolCall(name, args))
-        except: pass
+        except (json.JSONDecodeError, KeyError): pass
     if tcs: content = re.sub(_xp, "", content, flags=re.DOTALL).strip()
     return tcs, content
 
@@ -906,24 +913,51 @@ def _ensure_text_block(blocks):
     blocks.insert(1, {"type": "text", "text": txt})
     return txt
 
+_LOG_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    re.IGNORECASE | re.DOTALL,
+)
+_LOG_SK_RE = re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b", re.IGNORECASE)
+_LOG_NAMED_SECRET_RE = re.compile(
+    r"(?P<label>\b(?:api[_-]?key|app(?:lication)?[_-]?(?:id|secret)|appid|"
+    r"password|passwd|secret|token|qq_app(?:id|secret))\b[\"']?\s*[:=]\s*)"
+    r"(?P<quote>[\"']?)(?P<value>[^\s,\"'\]\}]+)(?P=quote)",
+    re.IGNORECASE,
+)
+
+
+def _redact_llm_log(content):
+    text = str(content or "")
+    text = _LOG_PRIVATE_KEY_RE.sub("[REDACTED-PRIVATE-KEY]", text)
+    text = _LOG_SK_RE.sub("[REDACTED-API-KEY]", text)
+    return _LOG_NAMED_SECRET_RE.sub(
+        lambda match: f"{match.group('label')}[REDACTED-CREDENTIAL]", text
+    )
+
+
 def _write_llm_log(label, content, log_path=None):
     if not log_path:
         log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'temp/model_responses/model_responses_{os.getpid()}.txt')
     os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(log_path, 'a', encoding='utf-8', errors='replace') as f:
-        f.write(f"=== {label} === {ts}\n{content}\n\n")
+        f.write(f"=== {label} === {ts}\n{_redact_llm_log(content)}\n\n")
+    try:
+        os.chmod(log_path, 0o640)
+    except OSError:
+        pass
 
 def tryparse(json_str):
     try: return json.loads(json_str)
-    except: pass
+    except json.JSONDecodeError: pass
     json_str = json_str.strip().strip('`').replace('json\n', '', 1).strip()
     try: return json.loads(json_str)
-    except: pass
+    except json.JSONDecodeError: pass
     try: return json.loads(json_str[:-1])
-    except: pass
+    except (json.JSONDecodeError, IndexError): pass
     if '}' in json_str: json_str = json_str[:json_str.rfind('}') + 1]
-    return json.loads(json_str)
+    try: return json.loads(json_str)
+    except json.JSONDecodeError: raise
 
 class MixinSession:
     """Multi-session fallback with spring-back to primary."""
@@ -1049,9 +1083,23 @@ class NativeToolClient:
 def resolve_session(cfg_name):
     cfg = reload_mykeys()[0].get(cfg_name)
     if not cfg: raise ValueError(f"Config '{cfg_name}' not in mykey")
-    if 'native' in cfg_name: return (NativeClaudeSession if 'claude' in cfg_name else NativeOAISession)(cfg=cfg)
-    if 'claude' in cfg_name: return ClaudeSession(cfg=cfg)
-    return LLMSession(cfg=cfg) if 'oai' in cfg_name else None
+    from provider_config import normalize_provider_config
+    cfg = normalize_provider_config(cfg)
+    session_type = str(cfg.get('session_type') or '').strip().lower()
+    if not session_type:
+        if 'native' in cfg_name:
+            session_type = 'native_claude' if 'claude' in cfg_name else 'native_oai'
+        elif 'claude' in cfg_name:
+            session_type = 'claude'
+        elif 'oai' in cfg_name:
+            session_type = 'oai'
+    session_class = {
+        'native_oai': NativeOAISession,
+        'native_claude': NativeClaudeSession,
+        'claude': ClaudeSession,
+        'oai': LLMSession,
+    }.get(session_type)
+    return session_class(cfg=cfg) if session_class else None
 
 def resolve_client(cfg_name):
     s = resolve_session(cfg_name)
