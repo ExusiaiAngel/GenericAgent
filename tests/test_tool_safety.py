@@ -488,12 +488,9 @@ class ToolSchemaPolicyTests(unittest.TestCase):
                     "GENERICAGENT_MCP_ALLOWLIST",
                     tools["mcp_call"]["function"]["description"],
                 )
-                self.assertIn(
-                    "GENERICAGENT_QQ_ADMIN_ENABLED",
-                    tools["qq_group_op"]["function"]["description"],
-                )
 
-        for tool_name in ("mcp_call", "qq_group_op"):
+        # QQ frontend removed 2026-08-05; qq_group_op no longer in schema.
+        for tool_name in ("mcp_call",):
             self.assertEqual(
                 schemas[0][tool_name]["function"]["parameters"],
                 schemas[1][tool_name]["function"]["parameters"],

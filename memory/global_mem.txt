@@ -35,6 +35,7 @@
 - **Auth:** env var `DEEPSEEK_API_KEY` (never hardcode, never log)
 - **Proxy:** env var `GENERICAGENT_PROXY` (HTTP proxy for API calls)
 - **Key file:** `mykey.py` reads these env vars and exposes them to `llmcore`
+- **mykeys access:** `import llmcore; llmcore.mykeys` is a plain `dict` (supports `.get()`/`[]`/`.keys()`); loaded from `/opt/GenericAgent/mykey.py`; use `.get()` for optional keys, never log values
 
 ## Project structure
 

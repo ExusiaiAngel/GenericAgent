@@ -560,48 +560,5 @@
         ]
       }
     }
-  },
-  {
-    "type": "function",
-    "function": {
-      "name": "qq_group_op",
-      "description": "QQ 群管理操作。默认禁用；仅当 GENERICAGENT_QQ_ADMIN_ENABLED 设置为 1/true/yes/on 时启用。可禁言、解禁、踢人、发群公告。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "op": {
-            "type": "string",
-            "enum": [
-              "ban",
-              "unban",
-              "kick",
-              "notice"
-            ],
-            "description": "操作类型: ban=禁言, unban=解禁, kick=踢出群, notice=发群公告"
-          },
-          "user_id": {
-            "type": "string",
-            "description": "[ban/unban/kick] 目标用户 QQ 号"
-          },
-          "group_id": {
-            "type": "string",
-            "description": "群号"
-          },
-          "duration": {
-            "type": "integer",
-            "description": "[ban] 禁言时长（秒），默认600",
-            "default": 600
-          },
-          "text": {
-            "type": "string",
-            "description": "[notice] 公告内容"
-          }
-        },
-        "required": [
-          "op",
-          "group_id"
-        ]
-      }
-    }
   }
 ]

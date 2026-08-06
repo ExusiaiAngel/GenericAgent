@@ -146,6 +146,71 @@ def list_subagents() -> list[dict]:
     return results
 
 
+def list_recent_subagents(base_dir=None, limit=5, now=None) -> list[dict]:
+    """List recent sub-agent status files from disk, including push metadata."""
+    base_dir = base_dir or _SUBAGENT_DIR
+    now = time.time() if now is None else now
+    rows = []
+    if not os.path.isdir(base_dir):
+        return rows
+    for name in os.listdir(base_dir):
+        d = os.path.join(base_dir, name)
+        if not os.path.isdir(d) or not name.startswith("sub_"):
+            continue
+        status_file = os.path.join(d, "status.json")
+        meta_file = os.path.join(d, ".ipc_meta.json")
+        st, meta = {}, {}
+        try:
+            if os.path.isfile(status_file):
+                with open(status_file, "r", encoding="utf-8") as f:
+                    st = json.load(f)
+        except Exception:
+            st = {}
+        try:
+            if os.path.isfile(meta_file):
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+        except Exception:
+            meta = {}
+        if not st:
+            continue
+        mtime = os.path.getmtime(status_file)
+
+        def _as_int(value, default=0):
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return default
+
+        def _as_float(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        next_retry = _as_float(meta.get("next_retry_at"))
+        rows.append({
+            "id": st.get("id", name),
+            "task": (st.get("task") or "")[:120],
+            "status": st.get("status", "unknown"),
+            "alive": st.get("status") == "running",
+            "created_at": st.get("created_at", ""),
+            "progress": (st.get("progress") or "")[:200],
+            "result_preview": (st.get("result") or "")[:240],
+            "turns": st.get("turns", 0),
+            "chat_id": str(meta.get("chat_id") or ""),
+            "is_group": bool(meta.get("is_group")),
+            "pushed": bool(meta.get("pushed")),
+            "push_attempts": _as_int(meta.get("push_attempts")),
+            "push_last_error": str(meta.get("push_last_error") or ""),
+            "next_retry_at": next_retry,
+            "retry_due": bool(next_retry is not None and next_retry <= now),
+            "mtime": mtime,
+        })
+    rows.sort(key=lambda x: x["mtime"], reverse=True)
+    return rows[:limit]
+
+
 def talk(sid: str, message: str) -> dict:
     """向运行中的子代理发送消息（文件注入）。"""
     with _sub_lock:

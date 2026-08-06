@@ -4,18 +4,46 @@ ROUTE_MAX_TURNS = {
     "quick_chat": 4,
     "quick_tool": 6,
     "context_followup": 8,
+    "context_action": 1,
+    "health_check": 1,
     "long_task": 24,
+}
+
+SOURCE_MAX_TURNS = {
+    # Scheduled reflection jobs must finish promptly and never inherit the
+    # historical 80-turn fallback used by the interactive CLI.
+    "reflect": 16,
+    # Offline/interactive jobs still have room for multi-step work, but use a
+    # finite default that makes accidental loops recoverable.
+    "task": 40,
+    "user": 40,
 }
 
 ROUTE_ALLOWED_TOOLS = {
     "quick_chat": frozenset({"file_read", "ask_user"}),
     "quick_tool": frozenset(),
     "context_followup": frozenset({"file_read", "ask_user"}),
+    "context_action": frozenset(),
+    "health_check": frozenset(),
 }
 
 
 def turns_for_route(route):
     return ROUTE_MAX_TURNS.get(route, ROUTE_MAX_TURNS["quick_chat"])
+
+
+def turns_for_source(source, requested=None, route="quick_chat"):
+    """Return a validated model-turn budget for every task entry point."""
+    if requested is not None:
+        try:
+            value = int(requested)
+        except (TypeError, ValueError):
+            value = 0
+        if value > 0:
+            return min(value, 80)
+    if source == "ipc":
+        return turns_for_route(route)
+    return SOURCE_MAX_TURNS.get(source, SOURCE_MAX_TURNS["user"])
 
 
 def tool_schema_for_route(schema, route):

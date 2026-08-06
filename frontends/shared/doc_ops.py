@@ -224,6 +224,11 @@ def xlsx_create(path: str, sheets: list) -> str:
         文件路径
     """
     _xlsx_avail()
+    if not sheets:
+        raise ValueError(
+            "xlsx 创建需要至少一个工作表：content 应为 [{\"name\": \"Sheet1\", "
+            "\"headers\": [...], \"rows\": [[...], ...]}]"
+        )
     wb = openpyxl.Workbook()
     # 删除默认 sheet
     wb.remove(wb.active)

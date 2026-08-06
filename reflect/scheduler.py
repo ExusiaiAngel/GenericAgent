@@ -37,6 +37,7 @@ _L4_INTERVAL = 600      # L4 archive check interval (seconds)
 _l4_t = 0               # last L4 archive time
 _MINING_INTERVAL = 600  # salient mining interval (seconds, 10min)
 _mining_t = 0           # last mining run time
+_DS_INTERVAL = 3600  # DeepSeek watch interval (seconds, 1h)
 
 
 def _l4_result_is_actionable(result):
@@ -116,6 +117,7 @@ def check():
             _logger.error(f'Salient mining failed: {e}')
 
     if not os.path.isdir(TASKS): return None
+
     now = datetime.now()
     os.makedirs(DONE, exist_ok=True)
     done_files = set(os.listdir(DONE))
@@ -180,3 +182,32 @@ def check():
                 f'完成后将执行报告写入 {rpt}。')
 
     return None
+
+# ---- DeepSeek watch daemon thread (guaranteed ~1h cadence, silent unless changed) ----
+def _ds_watch_loop():
+    import sys
+    _time.sleep(60)  # let agent boot; first check ~1min after start
+    while True:
+        try:
+            if _dir not in sys.path:
+                sys.path.insert(0, _dir)
+            from deepseek_watch import run_all
+            note = run_all()
+            if note:
+                _logger.info('DeepSeek Watch CHANGE:\n' + note)
+        except Exception as e:
+            _logger.error('DeepSeek watch failed: %s', e)
+        _time.sleep(_DS_INTERVAL)
+
+
+def _start_ds_watch():
+    import threading
+    for t in threading.enumerate():
+        if t.name == 'ds_watch_thread' and t.is_alive():
+            return  # already running (survives scheduler reload)
+    th = threading.Thread(target=_ds_watch_loop, name='ds_watch_thread', daemon=True)
+    th.start()
+    _logger.info('DeepSeek watch thread started (1h interval)')
+
+
+_start_ds_watch()

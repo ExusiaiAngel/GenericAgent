@@ -4,7 +4,7 @@ Startup: personal_bootstrap_profile | launch_readiness_report | cold_start_task_
 Supervision/Review: personal_supervision_sop | ★supervisor_sop[已审阅] | review_sop | verify_sop | code_review_principles
 L0(META-SOP): memory_management_sop
 L2: global_mem.txt (env facts)
-L3: launch_readiness_check_sop | web_research_sop | deep_research_sop | skill_search | ★test_sop[已审阅] | ui_detect.py | subagent | web_setup_sop | ★plan_sop[已审阅] | env_audit_sop | system_monitor_sop | backup_verify_sop | dep_check_sop | git_hygiene_sop | daily_brief_sop | config_audit_sop | network_monitor_sop | file_org_analysis_sop | weekly_review_sop | lesson_learner_sop | context_hygiene_sop | memory_search_sop | data_analysis_sop | reusable_task_runner_sop | subagent_operation_sop | web_automation_sop
+L3: launch_readiness_check_sop | web_research_sop | deep_research_sop | skill_search | ★test_sop[已审阅] | ui_detect.py | subagent | web_setup_sop | ★plan_sop[已审阅] | env_audit_sop | system_monitor_sop | backup_verify_sop | dep_check_sop | git_hygiene_sop | daily_brief_sop | config_audit_sop | network_monitor_sop | file_org_analysis_sop | weekly_review_sop | lesson_learner_sop | context_hygiene_sop | memory_search_sop | data_analysis_sop | reusable_task_runner_sop | subagent_operation_sop | web_automation_sop | deepseek_watch_sop
 L4: L4_raw_sessions/ | salient_mining_sop | salient_mining.py(automated→scheduler every10min→L2)
 
 Web/UI: tmwebdriver_sop(cross-origin/cross-tab) | computer_use.md | vision_sop | ljqCtrl_sop | vue3_component_sop | vision_api.template.py | web_collector_sop | web_monitor_sop | web_workflow_sop

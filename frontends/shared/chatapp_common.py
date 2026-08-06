@@ -130,6 +130,15 @@ def _extract_final_answer(text: str) -> str:
     """Remove protocol-only agent noise without rewriting valid user content."""
     if not text:
         return ""
+    # DeepSeek reasoning 模型输出 <summary>…</summary> 块：它可能是答案
+    # 本身（无外部文本）也可能是思考摘要（答案在外部）。统一处理：
+    # 移除 summary 块；外部仍有内容则用外部，否则回退 summary 内容。
+    m = SUMMARY_RE.search(text)
+    if m:
+        summary_content = m.group(1).strip()
+        text = text[: m.start()] + text[m.end():]
+        if not text.strip():
+            text = summary_content
     # Verbose agent output contains every reasoning/tool turn in one string.
     # A fenced tool transcript from an earlier turn can span far enough for the
     # generic fence regex to consume the later user-facing answer.  The final
