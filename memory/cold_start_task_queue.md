@@ -49,7 +49,7 @@ A task can become a skill only when it has:
 - Action: read README, `pyproject.toml`, top-level files, `memory/`, `reflect/`, `plugins/`, and `frontends/`
 - Output: `memory/project_map.md`
 - Success criteria: the map identifies entrypoints, memory layers, frontend options, plugin hooks, and reflective modes.
-- Verification: `Get-Content memory\project_map.md -TotalCount 120`
+- Verification: `head -120 memory/project_map.md`
 
 ### 2. Memory Index Hygiene
 
@@ -59,17 +59,17 @@ A task can become a skill only when it has:
 - Action: compare `memory/global_mem_insight.txt` against actual `memory/` files and add compact routing notes.
 - Output: updated `memory/global_mem_insight.txt`
 - Success criteria: L1 can route to bootstrap, project map, SOPs, browser, mobile, scheduling, and review workflows.
-- Verification: `Get-Content memory\global_mem_insight.txt`
+- Verification: `cat memory/global_mem_insight.txt`
 
 ### 3. Launch Readiness Check
 
 - Trigger: "检查 GenericAgent 是否能启动"
 - Risk: low
 - Inputs: selected Python executable if multiple exist
-- Action: check WSL `python3` version, import core modules, inspect `mykey.py` presence without printing secrets, and identify missing dependencies.
+- Action: check `python3` version, import core modules, inspect `mykey.py` presence without printing secrets, and identify missing dependencies.
 - Output: `memory/launch_readiness_report.md`
 - Success criteria: report says which command to run and what must be fixed before launch.
-- Verification: `Get-Content memory\launch_readiness_report.md -TotalCount 120`
+- Verification: `head -120 memory/launch_readiness_report.md`
 
 ### 4. First Reusable Local Skill
 

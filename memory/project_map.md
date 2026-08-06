@@ -65,7 +65,6 @@
 | `wechatapp.py` | 微信集成 |
 | `dingtalkapp.py` | 钉钉集成 |
 | `wecomapp.py` | 企业微信集成 |
-| `qqapp.py` | QQ 集成 |
 
 ## Plugin Hooks (`plugins/`)
 

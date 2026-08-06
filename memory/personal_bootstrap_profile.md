@@ -21,7 +21,7 @@ This file is the stable startup profile for this GenericAgent instance. Read it 
   - `sandbox/workspace`: drafts, experiments, generated files, and temporary project work.
   - `sandbox/reports`: read-only analysis outputs and supervision reports.
   - `sandbox/trash_review`: files proposed for deletion or replacement; never delete originals without confirmation.
-- **Runtime services:** `genericagent.service`, `genericagent-napcat.service`, and `genericagent-qq.service` under systemd.
+- **Runtime services:** `genericagent.service`, `genericagent-tg.service`, and `zodaccess-singbox.service` under systemd.
 - **Previous WSL/Windows environment:** historical only; retain it in L4 raw archives, never treat its paths or tool versions as current cloud facts.
 
 ## API Config
