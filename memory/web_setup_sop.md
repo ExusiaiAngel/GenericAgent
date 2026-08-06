@@ -37,3 +37,14 @@
 | v1 | 2026-06-11 | 自动生成版本记录 |
 | v3 | 2026-08-06 | 迁移至 Linux：进程名改 microsoft-edge/chrome，打开页面改用 xdg-open |
 
+
+
+## 服务器部署状态（2026-08-06）
+
+- 浏览器：Chrome for Testing 151（/opt/chrome-for-testing/chrome），systemd 服务 `ga-browser`
+- 运行方式：Xvfb :99 + chrome --load-extension=assets/tmwd_cdp_bridge + --user-data-dir=/var/lib/ga-browser
+- 启动页：https://example.com（可 scriptable 标签页，扩展自动注册 TMWebDriver session）
+- 桥接：扩展 → ws://127.0.0.1:18765（GA 进程内 TMWebDriver server，首次 web 工具调用时启动）
+- 已验证：web_scan（2 tabs）、web_execute_js（document.title 返回）
+- 注意：Chrome 稳定版（>=137）禁用 --load-extension，必须用 Chrome for Testing
+- 服务重启：systemctl restart ga-browser
