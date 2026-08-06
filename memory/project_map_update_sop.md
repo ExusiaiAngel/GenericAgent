@@ -8,26 +8,26 @@
 ## 更新流程
 
 ### 1. 数据采集（1 步替代多步）
-```powershell
+```bash
 # 一次性采集：顶层文件 + 子目录 + 行数
-Set-Location /opt/GenericAgent
+cd /opt/GenericAgent
 echo "=== 顶层 .py/.pyw ==="
-ls *.py, *.pyw | Select-Object Name
+ls *.py *.pyw 2>/dev/null
 echo "=== 子目录 ==="
-foreach ($d in @('memory', 'reflect', 'plugins', 'frontends', 'docs', 'assets')) {
+for d in memory reflect plugins frontends docs assets; do
     echo "--- $d/ ---"
-    Get-ChildItem "$d/*.py", "$d/*.md" 2>/dev/null | Select-Object -First 20 Name
-}
+    ls "$d"/*.py "$d"/*.md 2>/dev/null | head -20
+done
 echo "=== 行数 ==="
-Get-Content agentmain.py, agent_loop.py, ga.py, llmcore.py, TMWebDriver.py | Measure-Object -Line
+wc -l agentmain.py agent_loop.py ga.py llmcore.py TMWebDriver.py 2>/dev/null
 # 检查遗漏
-ls *.py | ForEach-Object {
-    $name = $_.Name
-    $lines = (Get-Content $name | Measure-Object -Line).Lines
-    if (-not (Select-String -Path memory/project_map.md -Pattern [regex]::Escape($name) -Quiet)) {
-        Write-Warning "未记录: $name ($lines 行)"
-    }
-}
+for f in *.py; do
+    name=$(basename "$f")
+    lines=$(wc -l < "$f")
+    if ! grep -qF "$name" memory/project_map.md; then
+        echo "WARNING: 未记录: $name ($lines 行)"
+    fi
+done
 ```
 ### 2. 对比现有地图
 - 读取 `memory/project_map.md`
@@ -39,13 +39,11 @@ ls *.py | ForEach-Object {
 - 确认所有路径可访问
 
 ### 4. 验证
-```powershell
+```bash
 # 路径可用性检查
-Select-String -Path memory/project_map.md -Pattern '`[^`]+\.(py|md|pyw)`' -AllMatches | 
-    ForEach-Object { $_.Matches } | ForEach-Object { $_.Value.Trim('`') } | ForEach-Object {
-    if (Test-Path "/opt/GenericAgent/$_") { echo "✅ $_" }
-    else { Write-Warning "⚠️ $_ not found" }
-}
+grep -oE '`[^`]+\.(py|md|pyw)`' memory/project_map.md | tr -d '`' | while read -r p; do
+    if [ -e "/opt/GenericAgent/$p" ]; then echo "✅ $p"; else echo "WARNING: ⚠️ $p not found"; fi
+done
 ```
 ## 注意事项
 - `mykey.py` 只引用不读取内容
@@ -57,4 +55,5 @@ Select-String -Path memory/project_map.md -Pattern '`[^`]+\.(py|md|pyw)`' -AllMa
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | 迁移至 Linux bash 环境（Ubuntu 24.04，root），命令全面 Linux 化 |
 

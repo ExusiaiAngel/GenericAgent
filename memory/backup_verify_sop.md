@@ -17,8 +17,8 @@
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界，确认 `mykey.py` 属敏感文件
 2. 已读取 `memory/env_audit_sop.md` — 了解环境审计基线
-3. Windows PowerShell 环境可用
-4. **关键安全约束：`mykey.py` 只能 Get-Item（获取元数据），禁止读其内容**
+3. Linux bash 环境（Ubuntu 24.04，root）可用
+4. **关键安全约束：`mykey.py` 只能 stat / `ls -l`（获取元数据），禁止读其内容**
 
 ## 输入
 
@@ -26,20 +26,20 @@
 
 ## 步骤
 
-### Step 1: 一次性数据采集（批量 PowerShell）
+### Step 1: 一次性数据采集（批量 bash）
 
 将所有备份检查合并为一个脚本执行，减少 round-trip：
 
-```powershell
+```bash
 echo "=== CONFIG FILES STAT ==="
 echo "--- mykey.py (stat only, NO cat) ---"
-ls -la /opt/GenericAgent/mykey.py, LastWriteTime
+stat -c '%n %s bytes %y' /opt/GenericAgent/mykey.py 2>&1 || echo "mykey.py: NOT FOUND"
 echo "--- env.sh ---"
-ls -la /opt/GenericAgent/env.sh, LastWriteTime
+stat -c '%n %s bytes %y' /opt/GenericAgent/env.sh 2>&1 || echo "env.sh: NOT FOUND"
 echo "--- pyproject.toml ---"
-ls -la /opt/GenericAgent/pyproject.toml, LastWriteTime
+stat -c '%n %s bytes %y' /opt/GenericAgent/pyproject.toml 2>&1 || echo "pyproject.toml: NOT FOUND"
 echo "--- .gitignore ---"
-ls -la /opt/GenericAgent/.gitignore, LastWriteTime
+stat -c '%n %s bytes %y' /opt/GenericAgent/.gitignore 2>&1 || echo ".gitignore: NOT FOUND"
 
 echo ""
 echo "=== GIT REMOTE ==="
@@ -51,21 +51,20 @@ cd /opt/GenericAgent && git log --oneline -5 2>&1
 
 echo ""
 echo "=== MEMORY DIRECTORY ==="
-$memFiles = ls /opt/GenericAgent/memory\*.md 2>/dev/null
-echo "--- file count: $($memFiles.Count) ---"
-$memSize = ($memFiles | Measure-Object Length -Sum).Sum
-$memSizeKB = [math]::Round($memSize / 1KB, 1)
-echo "--- total size: ${memSizeKB}KB ---"
+mem_count=$(ls /opt/GenericAgent/memory/*.md 2>/dev/null | wc -l)
+echo "--- file count: $mem_count ---"
+mem_size=$(cat /opt/GenericAgent/memory/*.md 2>/dev/null | wc -c)
+mem_size_kb=$(awk -v b="$mem_size" 'BEGIN {printf "%.1f", b/1024}')
+echo "--- total size: ${mem_size_kb}KB ---"
 
 echo ""
 echo "=== BACKUP FILES SCAN ==="
 echo "--- bundles ---"
-ls /opt/GenericAgent/sandbox\*.bundle 2>/dev/null | Select-Object Name, Length
+ls -la /opt/GenericAgent/sandbox/*.bundle 2>/dev/null || echo "(no bundles)"
 echo "--- backup files (excluding cache/workspace) ---"
-ls /opt/GenericAgent/sandbox\*backup* 2>/dev/null | 
-    Where-Object { $_.DirectoryName -notmatch 'cache|workspace' } | Select-Object Name, Length, LastWriteTime
+ls -la /opt/GenericAgent/sandbox/*backup* 2>/dev/null | grep -vE 'cache|workspace' || echo "(none)"
 echo "--- zip archives ---"
-ls /opt/GenericAgent/sandbox\*.zip 2>/dev/null | Select-Object Name, Length
+ls -la /opt/GenericAgent/sandbox/*.zip 2>/dev/null || echo "(no zip archives)"
 ```
 
 ### Step 2: 分析并生成报告
@@ -108,20 +107,21 @@ ls /opt/GenericAgent/sandbox\*.zip 2>/dev/null | Select-Object Name, Length
 
 ## 验证命令
 
-```powershell
+```bash
 # 检查输出文件存在且非空
-(Get-Content /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md | Measure-Object -Line).Lines
+report_path="/opt/GenericAgent/sandbox/reports/backup_verify_$(date +%F).md"
+wc -l "$report_path"
 
 # 确认 mykey.py 未读内容
-Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '内容未读取'
+grep -c '内容未读取' "$report_path"
 # 期望: >= 1
 
 # 确认风险等级已评估
-Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern '低|中|高|风险等级'
+grep -cE '低|中|高|风险等级' "$report_path"
 # 期望: 至少一个匹配
 
-# 确认所有路径为绝对路径（以 D: 开头）
-Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -Format 'yyyy-MM-dd').md -Pattern 'disk\'
+# 确认所有路径为绝对路径（以 / 开头）
+grep -cE '/opt/GenericAgent|^\s*/' "$report_path"
 # 期望: >= 5
 ```
 
@@ -139,10 +139,10 @@ Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -
 |------|----------|
 | `ls -la mykey.py` | 只读元数据（大小、时间戳），不读内容 |
 | `git log` | 只读最近 commit 信息，不修改 Git 状态 |
-| `Get-ChildItem` 扫描 | 排除 `cache/` 和 `workspace/` 避免大量无关输出 |
+| `ls` / `stat` 扫描 | 排除 `cache/` 和 `workspace/` 避免大量无关输出 |
 | 报告包含路径 | 所有路径必须为绝对路径，避免歧义 |
 
-**安全红线**：任何步骤中 `mykey.py` 都只能使用 `Get-Item` 命令，**绝对禁止** `Get-Content`、`cat` 或任何其他读取该文件内容的操作。
+**安全红线**：任何步骤中 `mykey.py` 都只能使用 `stat` / `ls -l` 命令，**绝对禁止** `cat` 或任何其他读取该文件内容的操作。
 
 ## 预期输出
 
@@ -154,6 +154,7 @@ Select-String -Path /opt/GenericAgent/sandbox/reports/backup_verify_$(Get-Date -
 |------|------|------|
 | v1 | 2026-06-09 | 基于 backup verify 任务第一遍成功运行结晶 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令 |
+| v3 | 2026-08-06 | 迁移至 Linux bash 环境（Ubuntu 24.04，root），命令与路径全面 Linux 化 |
 
 ## Provenance
 

@@ -14,7 +14,7 @@ results = scan_memory(pid, "48 8b ?? ?? 00", mode="hex", llm_mode=True)
 ```
 
 **CLI:**
-```powershell
+```bash
 # 基础搜索
 python ../memory/procmem_scanner.py <PID> "pattern" --mode string
 
@@ -29,15 +29,16 @@ python ../memory/procmem_scanner.py <PID> "pattern" --llm
 3. 分析返回的 JSON 中 `context` 字段，查看目标地址前后的原始字节及 ASCII 预览。
 
 ## 3. 注意事项
-- **权限**: 并非强制要求管理员权限，但需具备对目标进程的 `PROCESS_QUERY_INFORMATION` 和 `PROCESS_VM_READ` 权限。
+- **权限**: 并非强制要求 root 权限，但需具备对目标进程的读取权限（Linux 下即 ptrace 权限：root 或与目标进程同 UID）。
 - **效率**: 搜索大块内存时，尽量提供更唯一的特征码以减少误报。
 
 ## 4. CE式差集扫描定位动态字段
-定位微信等自绘UI中随操作变化的内存字段（如当前会话标题）。核心：一次全量scan + 多次ReadProcessMemory筛选。
+定位微信等自绘UI中随操作变化的内存字段（如当前会话标题）。核心：一次全量scan + 多次读取 `/proc/<pid>/mem` 筛选。
 
 ## 版本记录
 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | 迁移至 Linux 环境：CLI 代码块改 bash，权限说明改为 ptrace |
 

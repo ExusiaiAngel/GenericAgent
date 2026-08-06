@@ -44,7 +44,7 @@
    file_write / file_patch / code_run 改业务代码、在产出里写"我接下来去修一下"
    或暗示要动手。
 2. **Challenge the approach, 不仅找 bug** —— 先问"这条路本身对不对?"再问
-   "实现有没有 bug?":挖隐含假设、评估真实环境故障模式(Windows 路径 / 代理失活 /
+   "实现有没有 bug?":挖隐含假设、评估真实环境故障模式(硬编码路径 / 代理失活 /
    并发写 / UTF-8 边界 / token 预算耗尽)。
 3. **报告输出完即结束** —— 不复述用户目标、不做 meta 评论、不承诺 follow-up;
    报告 markdown 直接 echo 到对话,**不落盘 review.md、不打 `[ROUND END]`**。
@@ -77,7 +77,7 @@
 
 - **Q1: Is this the right approach?** — 有没有更简单 / 更标准 / 更安全的实现路径?
 - **Q2: What hidden dependencies could fail?** — OS / shell / 网络 / 并发 / 第三方 API 任一失效?
-- **Q3: What edge / hostile input breaks it?** — 空值、UTF-8、Windows 路径、超长输入、过期 token。
+- **Q3: What edge / hostile input breaks it?** — 空值、UTF-8、硬编码路径、超长输入、过期 token。
 - **Q4: Is the failure mode observable & recoverable?** — 仅看日志能不能定位?能不能不动手就恢复?
 
 ### 步骤 5:列 P0~P3 findings
@@ -173,4 +173,5 @@ PASS / CONDITIONAL / FAIL
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | Linux 化：故障模式示例迁移至 Linux bash 环境（Ubuntu 24.04，root） |
 

@@ -48,7 +48,7 @@ Supervise GenericAgent as:
 - Did it run the command it claims works?
 - Did it capture exact output or an observable success state?
 - For any background `agentmain.py --task` run, did the supervisor use
-  `python /opt/GenericAgent/memory\task_watchdog.py <task_dir> --json`
+  `python3 /opt/GenericAgent/memory/task_watchdog.py <task_dir> --json`
   as the primary completion gate?
 - Did it test at least one non-happy-path condition when risk is non-trivial?
 - Did it update launch readiness info after environment changes?
@@ -65,7 +65,7 @@ Use these exact terse interventions when needed:
 
 - `_intervene: 你还没有验证。先运行命令并贴出关键输出。`
 - `_intervene: 停。这个动作有外部副作用，先请求用户确认。`
-- `_intervene: 你正在用错误的Python环境做判断。确认在Windows Python 3.13下运行。`
+- `_intervene: 你正在用错误的Python环境做判断。确认在系统 Python 3 环境（Ubuntu 24.04，/usr/bin/python3）下运行。`
 - `_intervene: 你没有读取相关 SOP。先读 SOP，再继续。`
 - `_intervene: 你把细节塞进了 global_mem_insight。请压缩成路由信息，细节放到专门文件。`
 - `_intervene: 停。当前阶段只能写入 /opt/GenericAgent/sandbox。修改真实项目文件前必须请求用户确认。`
@@ -104,15 +104,15 @@ If the user has not specified another task, supervise the cold-start queue in th
 
 Before live supervision, check whether a worker is running:
 
-```powershell
-ps aux | grep python | Where-Object { $_.CommandLine -match 'agentmain' } 2>$null
+```bash
+ps aux | grep python | grep agentmain | grep -v grep
 ```
 
 If no worker is running, tell the user to start GenericAgent with:
 
-```powershell
+```bash
 cd /opt/GenericAgent
-python agentmain.py
+python3 agentmain.py
 ```
 
 Then ask the user to paste the worker's current task/output, or point the supervisor at the output file if one exists.
@@ -121,8 +121,8 @@ Then ask the user to paste the worker's current task/output, or point the superv
 
 For every supervised background task directory, prefer the formal watchdog:
 
-```powershell
-python /opt/GenericAgent/memory\task_watchdog.py <task_dir> --timeout 300 --interval 5 --json
+```bash
+python3 /opt/GenericAgent/memory/task_watchdog.py <task_dir> --timeout 300 --interval 5 --json
 ```
 
 Accept completion only when watchdog reports `state=completed` and `exit_code=0`.
@@ -135,4 +135,5 @@ accepting any worker claim.
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：检查/启动/监控命令 Linux 化 |
 

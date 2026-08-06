@@ -25,9 +25,10 @@
 
 ### Step 1: 基准采集
 
-```powershell
-# List memory directory — use Python (cross-platform) or PowerShell on Windows
-python -c "import os; print('\n'.join(f for f in os.listdir('memory') if os.path.isfile(os.path.join('memory', f))))"
+```bash
+# List memory directory — use Python (cross-platform) or plain bash
+python3 -c "import os; print('\n'.join(f for f in os.listdir('memory') if os.path.isfile(os.path.join('memory', f))))"
+# 等价写法: ls -la memory/*.md
 file_read ../memory/global_mem_insight.txt
 ```
 
@@ -112,3 +113,4 @@ all_found = all(kw in content for kw in routes.values())
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-08 | 基于 Memory Index Hygiene 任务第一/二遍经验结晶 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：采集示例使用 python3/bash |

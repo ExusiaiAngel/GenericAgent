@@ -130,10 +130,10 @@ web_execute_js script='{"cmd": "batch", "commands": [...]}'
 
 ## 连不上排查
 web_scan失败时按序排查（自动检测优先，用户参与放最后）：
-①浏览器没开？→检查浏览器进程是否在跑(`ps aux | grep msedge`)，没有则启动并打开正常URL（⚠about:blank等内部页不加载扩展）
+①浏览器没开？→检查浏览器进程是否在跑(`ps aux | grep -E 'microsoft-edge|chrome'`)，没有则启动并打开正常URL（⚠about:blank等内部页不加载扩展）
 ②WS后台挂了？→本机18766端口没监听即dead→手动**后台持续运行**`from TMWebDriver import TMWebDriver; TMWebDriver()`起master
-③扩展没装？→读浏览器用户目录下`Secure Preferences`→`extensions.settings`中找`path`含`tmwd_cdp_bridge`的条目
-  （Chrome: `%LOCALAPPDATA%\Google\Chrome\User Data\`；Edge: `%LOCALAPPDATA%\Microsoft\Edge\User Data\`）
+③扩展没装？→读浏览器用户目录下`Preferences`文件→`extensions.settings`中找`path`含`tmwd_cdp_bridge`的条目
+  （Chrome: `~/.config/google-chrome/`；Edge: `~/.config/microsoft-edge/`；root 用户为 `/root/.config/...`）
   找到→扩展已装，排查其他原因；没找到→走web_setup_sop
 ④以上都正常仍连不上→请求用户协助
 
@@ -141,7 +141,7 @@ web_scan失败时按序排查（自动检测优先，用户参与放最后）：
 
 **2026-06-08**：修复 `simple-websocket-server` 导入问题。
 - **根因**：`TMWebDriver` 在系统 Python（`/usr/bin/python3`）下运行，便携 Python 的 site-packages 不在 `sys.path` 中
-- **修复**：`TMWebDriver.py:3-5` 动态插入便携 Python site-packages 路径（已移除，Windows Python 原生可用）
+- **修复**：`TMWebDriver.py:3-5` 动态插入便携 Python site-packages 路径（已移除，当前 Linux 环境 Python 原生可用）
 - **验证**：`web_scan` 错误从 `ModuleNotFoundError` 变为 "没有可用的浏览器标签页"（import 问题已解决）
 
 ## 版本记录
@@ -149,4 +149,5 @@ web_scan失败时按序排查（自动检测优先，用户参与放最后）：
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | Linux 化：浏览器进程名、用户数据目录迁移至 Linux（Ubuntu 24.04，root；msedge→microsoft-edge） |
 

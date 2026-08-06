@@ -21,19 +21,19 @@
 
 可选：如果系统存在多个 Python 版本，用户可指定使用的 Python 可执行路径。
 
-默认：自动检测 Windows Python 3.13。
+默认：自动检测 Linux 系统 Python 3（/usr/bin/python3）。
 
 ## 步骤
 
 ### Step 1: 检查 Python 环境
 
-```powershell
-# Windows Python
-python --version
-(Get-Command python).Source
+```bash
+# Linux 系统 Python
+python3 --version
+which python3
 
 # 检查是否可用
-python -c "import sys; print(f'Python {sys.version}')"
+python3 -c "import sys; print(f'Python {sys.version}')"
 ```
 
 ### Step 2: 检查关键文件
@@ -44,7 +44,7 @@ python -c "import sys; print(f'Python {sys.version}')"
 | `agentmain.py` | `ls -la agentmain.py` |
 | `llmcore.py` | `ls -la llmcore.py` |
 | `TMWebDriver.py` | `ls -la TMWebDriver.py` |
-| `ga.sh` (启动脚本) | `Get-Content ga.sh -TotalCount 5` |
+| `ga.sh` (启动脚本) | `head -5 ga.sh` |
 | `env.sh` | `ls -la env.sh` |
 | `pyproject.toml` | `ls -la pyproject.toml` |
 
@@ -52,7 +52,7 @@ python -c "import sys; print(f'Python {sys.version}')"
 
 ```python
 import sys
-sys.path.insert(0, 'D:\\GenericAgent')
+sys.path.insert(0, '/opt/GenericAgent')
 modules = ['mykey', 'llmcore', 'agent_loop', 'agentmain', 'ga', 'TMWebDriver']
 for mod in modules:
     try:
@@ -64,8 +64,8 @@ for mod in modules:
 
 ### Step 4: 依赖审计
 
-```powershell
-pip list
+```bash
+pip3 list
 ```
 
 检查关键依赖是否安装：`requests`, `beautifulsoup4`, `bottle`, `simple-websocket-server`, `aiohttp`
@@ -88,9 +88,9 @@ pip list
 
 ## 验证命令
 
-```powershell
-Get-Content memory/launch_readiness_report.md -TotalCount 20
-Select-String -Path memory/launch_readiness_report.md -Pattern '启动命令|修复|✅|❌|🔴'
+```bash
+head -20 memory/launch_readiness_report.md
+grep -E '启动命令|修复|✅|❌|🔴' memory/launch_readiness_report.md
 ```
 
 ## 失败恢复
@@ -98,8 +98,8 @@ Select-String -Path memory/launch_readiness_report.md -Pattern '启动命令|修
 | 尝试次数 | 操作 |
 |---------|------|
 | 第 1 次失败 | 检查 Python 是否安装且在 PATH 中 |
-| 第 2 次失败 | 检查 `pip list` 确认关键依赖 |
-| 第 3 次失败 | 请求用户介入，展示 `python --version` 和 `$env:PATH` 输出 |
+| 第 2 次失败 | 检查 `pip3 list` 确认关键依赖 |
+| 第 3 次失败 | 请求用户介入，展示 `python3 --version` 和 `$PATH` 输出 |
 
 ## 人为确认点
 
@@ -117,3 +117,4 @@ Select-String -Path memory/launch_readiness_report.md -Pattern '启动命令|修
 |------|------|------|
 | v1 | 2026-06-08 | 基于 Launch Readiness Check 任务第一遍经验结晶 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：python3/which/head 替代 PowerShell |

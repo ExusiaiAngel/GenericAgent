@@ -8,13 +8,13 @@
 
 ## 目的
 
-对当前 Windows 开发环境进行配置层面的安全检查，审计 Shell、Git、SSH、环境变量、Docker 五大配置区，输出结构化的配置审计报告并给出配置完整性评分。
+对当前 Linux 开发环境（Ubuntu 24.04，root）进行配置层面的安全检查，审计 Shell、Git、SSH、环境变量、Docker 五大配置区，输出结构化的配置审计报告并给出配置完整性评分。
 
 ## 前置条件
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界
 2. 已读取 `memory/env_audit_sop.md` — 了解环境审计基线
-3. Windows PowerShell 环境可用
+3. Linux bash 环境（Ubuntu 24.04，root）可用
 4. **CRITICAL SECURITY RULE**: 任何步骤中绝对禁止打印 token、password、secret、key 等敏感值
 
 ## 输入
@@ -23,68 +23,60 @@
 
 ## 步骤
 
-### Step 1: 一次性数据采集（批量 PowerShell，含安全过滤）
+### Step 1: 一次性数据采集（批量 bash，含安全过滤）
 
-**安全红线**：以下命令均已做安全过滤 —— `git config --list` 使用 `Select-String -NotMatch` 排除 token/password 行；SSH 检查仅用 `Get-ChildItem` 列出文件，不使用 `Get-Content` 读取任何密钥内容。
+**安全红线**：以下命令均已做安全过滤 —— `git config --list` 使用 `grep -v` 排除 token/password 行；SSH 检查仅用 `ls` 列出文件，不使用 `cat` 读取任何密钥内容。
 
-```powershell
+```bash
 echo "=== SHELL ==="
-echo "--- PowerShell version ---"
-$PSVersionTable.PSVersion
+echo "--- bash version ---"
+bash --version | head -1
 echo "--- profile files ---"
-$profile | ls -la 2>/dev/null | Select-Object FullName, Length, LastWriteTime
-if (-not $?) { echo "profile: NOT FOUND" }
-echo "--- execution policy ---"
-Get-ExecutionPolicy
+ls -la "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" 2>/dev/null || echo "profile: NOT FOUND"
+echo "--- login shell ---"
+echo "SHELL=$SHELL UID=$(id -u)"
 
 echo ""
 echo "=== GIT ==="
 echo "--- git version ---"
 git --version 2>&1
 echo "--- git global config (SAFE: token/password filtered) ---"
-git config --list --global 2>&1 | Select-String -NotMatch -Pattern 'token|password|secret|key'
+git config --list --global 2>&1 | grep -viE 'token|password|secret|key'
 echo "--- git aliases ---"
 git config --global --get-regexp alias 2>&1
 
 echo ""
 echo "=== SSH ==="
-$sshDir = "$env:USERPROFILE\.ssh"
+sshDir="$HOME/.ssh"
 echo "--- .ssh directory ---"
-ls $sshDir 2>/dev/null | Select-Object Name, Length, LastWriteTime
-if (-not $?) { echo ".ssh: NOT FOUND" }
+ls -la "$sshDir" 2>/dev/null || echo ".ssh: NOT FOUND"
 echo "--- key count ---"
-$keys = Get-ChildItem "$sshDir\id_*" 2>/dev/null
-echo "$($keys.Count) key files"
+keys=$(ls "$sshDir"/id_* 2>/dev/null)
+echo "$(printf '%s\n' "$keys" | grep -c .) key files"
 echo "--- known_hosts ---"
-$knownHosts = Get-Item "$sshDir\known_hosts" 2>/dev/null
-if ($knownHosts) {
-    echo "known_hosts: $($knownHosts.Length) bytes"
-} else {
+if [ -f "$sshDir/known_hosts" ]; then
+    echo "known_hosts: $(stat -c %s "$sshDir/known_hosts") bytes"
+else
     echo "known_hosts: NOT FOUND"
-}
+fi
 echo "--- ssh-agent ---"
-ssh-add -l 2>&1
-if (-not $?) { echo "ssh-agent not running or no identities" }
+ssh-add -l 2>&1 || echo "ssh-agent not running or no identities"
 
 echo ""
 echo "=== ENV ==="
 echo "--- GenericAgent/Python variables ---"
-ls Env: | Where-Object { $_.Name -match 'GENERICAGENT|PYTHON|PATH|PROXY' -and $_.Name -notmatch 'TOKEN|PASSWORD|SECRET|KEY' } | 
-    Select-Object Name, Value
+env | grep -iE 'GENERICAGENT|PYTHON|PATH|PROXY' | grep -viE 'TOKEN|PASSWORD|SECRET|KEY'
 echo "--- key tool versions ---"
-python --version 2>&1
-node --version 2>&1
-if (-not $?) { echo "(node not installed)" }
-npm --version 2>&1
-if (-not $?) { echo "(npm not installed)" }
+python3 --version 2>&1
+node --version 2>&1 || echo "(node not installed)"
+npm --version 2>&1 || echo "(npm not installed)"
 
 echo ""
 echo "=== DOCKER ==="
 echo "--- client ---"
-docker --version 2>&1
-if (-not $?) { echo "(docker not installed)"; return }
+docker --version 2>&1 || { echo "(docker not installed)"; exit 0; }
 echo "--- server info ---"
-docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Storage Driver|Containers:|Images:|Running'
+docker info 2>&1 | grep -iE 'Server Version|Operating System|Storage Driver|Containers:|Images:|Running'
 ```
 
 ### Step 2: 分析并生成报告
@@ -93,7 +85,7 @@ docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Stora
 
 | 分区 | 内容 | 状态标记 |
 |------|------|----------|
-| 1. Shell 配置 | PowerShell 版本、profile 文件存在性、执行策略 | 🟢🟡🔴 |
+| 1. Shell 配置 | bash 版本、profile 文件存在性、登录 shell 配置 | 🟢🟡🔴 |
 | 2. Git 全局配置 | user.name / user.email / credential.helper / aliases（已过滤敏感值） | 🟢🟡🔴 |
 | 3. SSH 密钥 | `~/.ssh/` 目录文件列表、密钥文件数量、known_hosts 状态、ssh-agent 状态 | 🟢🟡🔴 |
 | 4. 环境变量 | GenericAgent 相关变量、Python/Node.js 版本、PATH 状态 | 🟢🟡🔴 |
@@ -105,7 +97,7 @@ docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Stora
 
 | 类别 | 权重 | 满分 | 扣分条件 |
 |:----:|:----:|:----:|----------|
-| Shell 配置 | 20% | 20 | PowerShell < 7.0 扣 5；无 profile 文件扣 5；受限执行策略扣 10 |
+| Shell 配置 | 20% | 20 | bash < 5.0 扣 5；无 profile 文件扣 5；登录 shell 非 bash 扣 10 |
 | Git 配置 | 25% | 25 | 无 `user.name` / `user.email` 扣 15；无常用 aliases 扣 5 |
 | SSH 密钥 | 20% | 20 | 0 个密钥扣 15；`known_hosts` 不存在扣 5 |
 | 环境变量 | 20% | 20 | Python 不在 PATH 扣 10；Node.js 缺失扣 5 |
@@ -121,7 +113,7 @@ docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Stora
 将完整报告写入沙箱输出路径：
 
 ```
-/opt/GenericAgent/sandbox/reports\config_audit_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports/config_audit_YYYY-MM-DD.md
 ```
 
 报告格式约束：
@@ -135,32 +127,32 @@ docker info 2>&1 | Select-String -Pattern 'Server Version|Operating System|Stora
 - 报告覆盖全部 5 个分区
 - SSH 分区必须明确报告密钥数量
 - Git 配置中不包含任何 token/password/secret 值（已过滤）
-- 所有敏感文件仅使用 `Get-ChildItem` / `Get-Item` 获取元数据，未使用 `Get-Content` 读取内容
+- 所有敏感文件仅使用 `ls` / `stat` 获取元数据，未使用 `cat` 读取内容
 - 配置完整性评分基于 5 个维度加权计算，范围 0-100
 - 输出文件非空且超过 40 行
 
 ## 验证命令
 
-```powershell
+```bash
 # 检查输出文件存在且行数合理
-$reportPath = "/opt/GenericAgent/sandbox/reports\config_audit_$(Get-Date -Format 'yyyy-MM-dd').md"
-(Get-Content $reportPath | Measure-Object -Line).Lines
+report_path="/opt/GenericAgent/sandbox/reports/config_audit_$(date +%F).md"
+wc -l "$report_path"
 # 期望: >= 40 行
 
 # 检查所有分区标题是否存在
-Select-String -Path $reportPath -Pattern 'Shell 配置|SSH 密钥|环境变量|Docker|Git'
+grep -cE 'Shell 配置|SSH 密钥|环境变量|Docker|Git' "$report_path"
 # 期望: >= 5
 
 # 安全验证：确认无敏感值泄露
-Select-String -Path $reportPath -Pattern 'token|password|secret|^[a-zA-Z0-9+/]{40,}$'
+grep -cE 'token|password|secret|^[a-zA-Z0-9+/]{40,}$' "$report_path"
 # 期望: 0
 
 # 检查评分数值
-Select-String -Path $reportPath -Pattern '\d+\s*/\s*100'
+grep -E '[0-9]+\s*/\s*100' "$report_path"
 # 期望: 输出格式如 "81/100"
 
 # 确认只读声明存在
-Select-String -Path $reportPath -Pattern '只读探测'
+grep -c '只读探测' "$report_path"
 # 期望: 1
 ```
 
@@ -177,17 +169,17 @@ Select-String -Path $reportPath -Pattern '只读探测'
 | 操作 | 确认要求 |
 |------|----------|
 | `git config --list` | 必须过滤敏感值 |
-| `ls ~/.ssh/` | 只列出文件名和权限，**禁止** `Get-Content` 任何 `id_*` 文件内容 |
-| `ls Env:` | 过滤仅显示 `GENERICAGENT`/`PYTHON` 相关变量 |
+| `ls ~/.ssh/` | 只列出文件名和权限，**禁止** `cat` 任何 `id_*` 文件内容 |
+| `env \| grep` | 过滤仅显示 `GENERICAGENT`/`PYTHON` 相关变量 |
 
 **安全红线（不可违反）**：
-1. **绝对禁止** `Get-Content` 任何 SSH 私钥文件
+1. **绝对禁止** `cat` 任何 SSH 私钥文件
 2. **绝对禁止** 输出 `git config --list` 中包含 `token`/`password`/`secret` 关键字的行
 3. **mykey.py 绝不可读** — 本 SOP 不涉及 `mykey.py`，但同样适用于所有 SOP 的安全原则
 
 ## 预期输出
 
-报告写入：`/opt/GenericAgent/sandbox/reports\config_audit_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports/config_audit_YYYY-MM-DD.md`
 
 ## 版本记录
 
@@ -195,6 +187,7 @@ Select-String -Path $reportPath -Pattern '只读探测'
 |------|------|------|
 | v1 | 2026-06-09 | 基于 config audit 任务 Pass 1 成功运行结晶 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令，移除 WSL 专用检查 |
+| v3 | 2026-08-06 | 迁移至 Linux bash 环境（Ubuntu 24.04，root），命令与路径全面 Linux 化 |
 
 ## Provenance
 

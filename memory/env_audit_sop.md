@@ -8,13 +8,13 @@
 
 ## 目的
 
-对当前 Windows 开发环境进行全面审计，检查 Python、Git、磁盘、开发工具链等关键组件状态，输出结构化的审计报告。
+对当前 Linux 开发环境进行全面审计，检查 Python、Git、磁盘、开发工具链等关键组件状态，输出结构化的审计报告。
 
 ## 前置条件
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界
 2. 已读取 `memory/personal_bootstrap_profile.md` — 确认用户偏好
-3. Windows PowerShell 环境可用
+3. Linux bash 环境可用（Ubuntu 24.04，root 用户）
 
 ## 输入
 
@@ -22,19 +22,18 @@
 
 ## 步骤
 
-### Step 1: 一次性数据采集（批量 PowerShell）
+### Step 1: 一次性数据采集（批量 bash）
 
 将所有审计子检查合并为一个脚本执行，减少 round-trip：
 
-```powershell
+```bash
 echo "=== PYTHON ==="
-python --version 2>&1
-(Get-Command python).Source
+python3 --version 2>&1
+which python3
 echo "--- pip ---"
-pip --version 2>&1
+pip3 --version 2>&1
 echo "--- conda ---"
-conda --version 2>&1
-if (-not $?) { echo "(not installed)" }
+conda --version 2>&1 || echo "(not installed)"
 
 echo ""
 echo "=== GIT ==="
@@ -45,40 +44,29 @@ git config --global --get-regexp alias 2>&1
 
 echo ""
 echo "=== SYSTEM ==="
-$os = Get-CimInstance Win32_OperatingSystem
-echo "OS: $($os.Caption) $($os.Version)"
-echo "Build: $($os.BuildNumber)"
-$cpu = ps auxor
-echo "CPU: $($cpu.Name)"
-echo "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
+uname -a
+lsb_release -a 2>/dev/null
+lscpu | grep -E 'Model name|^CPU\(s\)|^Core|^Thread' || true
 
 echo ""
 echo "=== DISK ==="
-Get-PSDrive -PSProvider FileSystem | Where-Object Used -gt 0 | 
-    Select-Object Name, @{N='Size(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,1)}},
-    @{N='Used(GB)';E={[math]::Round($_.Used/1GB,1)}},
-    @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}},
-    @{N='Used%';E={[math]::Round($_.Used/($_.Used+$_.Free)*100,1)}}
+df -h -x tmpfs -x devtmpfs -x overlay -x squashfs
 
 echo ""
 echo "=== TOOLS ==="
 echo "--- node ---"
-node --version 2>&1
-if (-not $?) { echo "(not installed)" }
+node --version 2>&1 || echo "(not installed)"
 echo "--- npm ---"
-npm --version 2>&1
-if (-not $?) { echo "(not installed)" }
+npm --version 2>&1 || echo "(not installed)"
 echo "--- docker ---"
-docker --version 2>&1
-if (-not $?) { echo "(not installed)" }
+docker --version 2>&1 || echo "(not installed)"
 echo "--- docker compose ---"
-docker compose version 2>&1
-if (-not $?) { echo "(not installed)" }
+docker compose version 2>&1 || echo "(not installed)"
 
 echo ""
 echo "=== PATH ==="
-$env:Path -split ';' | Select-Object -First 30
-echo "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProperty Count) total entries)"
+echo "$PATH" | tr ':' '\n' | head -30
+echo "... ($(echo "$PATH" | tr ':' '\n' | wc -l) total entries)"
 ```
 
 ### Step 2: 分析并生成报告
@@ -89,7 +77,7 @@ echo "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProper
 |------|------|
 | 1. Python 版本 | 版本、路径、pip 版本、conda 状态 |
 | 2. Git 配置 | 版本、user.name、user.email、proxy、alias |
-| 3. 系统信息 | Windows 版本、CPU、内核 |
+| 3. 系统信息 | Ubuntu/Linux 版本、CPU、内核 |
 | 4. 磁盘空间 | 各驱动器使用率 |
 | 5. 关键开发工具 | node, npm, docker, docker compose 版本表 |
 | 6. PATH 检查 | 前 30 个 PATH 条目，检查 Python/Git 目录是否在 PATH 中 |
@@ -102,7 +90,7 @@ echo "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProper
 将完整报告写入沙箱输出路径：
 
 ```
-/opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt
+/opt/GenericAgent/sandbox/workspace/env_audit_task/output.txt
 ```
 
 ## 成功标准
@@ -114,13 +102,15 @@ echo "... ($($env:Path -split ';' | Measure-Object | Select-Object -ExpandProper
 
 ## 验证命令
 
-```powershell
+```bash
+REPORT=/opt/GenericAgent/sandbox/workspace/env_audit_task/output.txt
+
 # 检查输出文件存在且非空
-(Get-Content /opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt | Measure-Object -Line).Lines
+wc -l < "$REPORT"
 
 # 检查关键分区标题是否存在
-Select-String -Path /opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt -Pattern 'PYTHON|GIT|SYSTEM|DISK|TOOLS|PATH|SUMMARY'
-# 期望: >= 7
+grep -E 'PYTHON|GIT|SYSTEM|DISK|TOOLS|PATH|SUMMARY' "$REPORT"
+# 期望: >= 7 个匹配
 ```
 
 ## 失败恢复
@@ -128,7 +118,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\env_audit_task\output.tx
 | 尝试次数 | 操作 |
 |---------|------|
 | 第 1 次失败 | 检查单个命令是否因权限或工具缺失报错 |
-| 第 2 次失败 | 跳过失败的命令，用 `try/catch` 兜底；继续生成不完整报告 |
+| 第 2 次失败 | 跳过失败的命令，用 `|| echo` 兜底并继续；生成不完整报告 |
 | 第 3 次失败 | 请求用户介入 |
 
 ## 人为确认点
@@ -137,7 +127,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\env_audit_task\output.tx
 
 ## 预期输出
 
-报告写入：`/opt/GenericAgent/sandbox/workspace\env_audit_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace/env_audit_task/output.txt`
 
 ## 版本记录
 
@@ -145,6 +135,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\env_audit_task\output.tx
 |------|------|------|
 | v1 | 2026-06-09 | 基于 env audit 任务第一遍成功运行结晶 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令，移除 WSL 专用检查 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：python3/df/lscpu/uname 替代 PowerShell/WMI |
 
 ## Provenance
 

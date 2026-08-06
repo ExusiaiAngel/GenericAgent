@@ -15,7 +15,7 @@
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界
 2. 已读取 `memory/personal_bootstrap_profile.md` — 确认用户偏好
-3. Windows Python 可用，`packaging` 库已安装
+3. Linux Python 可用（Ubuntu 24.04，root），`packaging` 库已安装
 
 ## 输入
 
@@ -27,13 +27,13 @@
 
 同时读取 `pyproject.toml` 并列出当前环境中所有已安装的包：
 
-```powershell
+```bash
 # 并行执行两个操作：
 # 1. 读取 pyproject.toml
-Get-Content /opt/GenericAgent/pyproject.toml
+cat /opt/GenericAgent/pyproject.toml
 
 # 2. 列出已安装的包（JSON 格式）
-pip list --format=json 2>$null
+pip list --format=json 2>/dev/null
 ```
 
 ### Step 2: 交叉比对并生成报告
@@ -57,7 +57,7 @@ pip list --format=json 2>$null
 将完整报告写入沙箱输出路径：
 
 ```
-/opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt
+/opt/GenericAgent/sandbox/workspace/dep_check_task/output.txt
 ```
 
 报告分区：
@@ -80,20 +80,21 @@ pip list --format=json 2>$null
 
 ## 验证命令
 
-```powershell
+```bash
 # 检查输出文件存在且非空
-(Get-Content /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt | Measure-Object -Line).Lines
+report_path="/opt/GenericAgent/sandbox/workspace/dep_check_task/output.txt"
+wc -l "$report_path"
 
 # 检查关键状态标记是否存在
-Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern 'SATISFIED|MISSING|UNDECLARED'
+grep -cE 'SATISFIED|MISSING|UNDECLARED' "$report_path"
 # 期望: >= 10 匹配
 
 # 检查汇总行存在
-Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern '汇总'
+grep -c '汇总' "$report_path"
 # 期望: >= 1
 
 # 检查分区标题
-Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt -Pattern '\[project\]|core|ui|all-frontends|未声明'
+grep -cE '\[project\]|core|ui|all-frontends|未声明' "$report_path"
 # 期望: >= 4
 ```
 
@@ -111,7 +112,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.tx
 
 ## 预期输出
 
-报告写入：`/opt/GenericAgent/sandbox/workspace\dep_check_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace/dep_check_task/output.txt`
 
 ## 版本记录
 
@@ -119,6 +120,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\dep_check_task\output.tx
 |------|------|------|
 | v1 | 2026-06-09 | 基于 dep check 任务 Pass 1 成功运行结晶（3 rounds） |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令 |
+| v3 | 2026-08-06 | 迁移至 Linux bash 环境（Ubuntu 24.04，root），命令与路径全面 Linux 化 |
 
 ## Provenance
 

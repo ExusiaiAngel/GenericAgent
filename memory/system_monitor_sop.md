@@ -11,13 +11,13 @@
 
 ## 目的
 
-对当前 Windows 系统进行全面监控检查，采集 uptime、内存、CPU、进程、磁盘、日志等关键指标，输出结构化的系统健康报告并给出健康评分。
+对当前 Linux 系统进行全面监控检查，采集 uptime、内存、CPU、进程、磁盘、日志等关键指标，输出结构化的系统健康报告并给出健康评分。
 
 ## 前置条件
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界
 2. 已读取 `memory/env_audit_sop.md` — 了解环境审计基线
-3. Windows PowerShell 环境可用
+3. Linux bash 环境可用（Ubuntu 24.04，root 用户）
 
 ## 输入
 
@@ -25,87 +25,46 @@
 
 ## 步骤
 
-### Step 1: 一次性数据采集（批量 PowerShell）
+### Step 1: 一次性数据采集（批量 bash）
 
 将所有监控子检查合并为一个脚本执行，减少 round-trip：
 
-```powershell
+```bash
 echo "=== UPTIME ==="
-$os = Get-CimInstance Win32_OperatingSystem
-$bootTime = $os.LastBootUpTime
-$uptime = (Get-Date) - $bootTime
-echo "Uptime: $($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m $($uptime.Seconds)s"
-echo "Boot time: $($bootTime.ToString('yyyy-MM-dd HH:mm:ss'))"
-$sessions = (Get-CimInstance Win32_ComputerSystem).UserName
-echo "Logged in user: $sessions"
+uptime -p
+echo "Boot time: $(who -b | awk '{print $3, $4}')"
+echo "Logged in user: $(who | awk '{print $1}' | sort -u | tr '\n' ' ')"
 
 echo ""
 echo "=== MEMORY ==="
-$memTotal = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
-$memFree = [math]::Round($os.FreePhysicalMemory / 1MB, 1)
-$memUsed = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 1)
-$memPct = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize * 100, 1)
-echo "Total: ${memTotal}GB"
-echo "Used: ${memUsed}GB"
-echo "Free: ${memFree}GB"
-echo "Usage: ${memPct}%"
+free -h
 
 echo ""
 echo "=== CPU ==="
-$cpu = ps auxor
-echo "CPU: $($cpu.Name)"
-echo "Cores: $($cpu.NumberOfCores) / Logical: $($cpu.NumberOfLogicalProcessors)"
-$cpuLoad = $cpu.LoadPercentage
-echo "Load: ${cpuLoad}%"
-# Get current CPU usage via counter
-$cpuSample = ps auxor | Measure-Object -Property LoadPercentage -Average
-echo "Average Load: $([math]::Round($cpuSample.Average))%"
-echo "Processes: $((ps aux).Count)"
+lscpu | grep -E 'Model name|^CPU\(s\)|^Core|^Thread' || true
+echo "Load avg: $(cat /proc/loadavg)"
+echo "Processes: $(ps aux | wc -l)"
 
 echo ""
 echo "=== TOP5 MEMORY PROCESSES ==="
-ps aux | grep | Sort-Object WorkingSet64 -Descending | Select-Object -First 6 |
-    Select-Object Name, Id, @{N='WorkingSet(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}},
-    @{N='CPU(s)';E={[math]::Round($_.TotalProcessorTime.TotalSeconds,1)}}
+ps aux --sort=-%mem | awk 'NR<=6 {printf "%-12s %-8s %8.1f MB %s\n", $1, $2, $6/1024, $11}'
 
 echo ""
 echo "=== GENERICAGENT PROCESSES ==="
-$gaProcesses = ps aux | grep -Name python* 2>/dev/null | 
-    Where-Object { $_.CommandLine -match 'agentmain|GenericAgent|task_runner' } 2>$null
-if ($gaProcesses) {
-    $gaProcesses | Select-Object Name, Id, @{N='WorkingSet(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}}, StartTime
-} else {
+ps aux | grep -E 'agentmain|GenericAgent|task_runner' | grep -v grep ||
     echo "(no GenericAgent processes running)"
-}
 echo "--- all python processes ---"
-ps aux | grep -Name python* 2>/dev/null | Select-Object Name, Id, @{N='WS(MB)';E={[math]::Round($_.WorkingSet64/1MB,1)}} | Format-Table -AutoSize
-if (-not $?) { echo "(no python processes)" }
+ps aux | grep -E 'python' | grep -v grep ||
+    echo "(no python processes)"
 
 echo ""
 echo "=== DISK ==="
-Get-PSDrive -PSProvider FileSystem | Where-Object Used -gt 0 |
-    Select-Object Name, Root,
-    @{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,1)}},
-    @{N='Used(GB)';E={[math]::Round($_.Used/1GB,1)}},
-    @{N='Free(GB)';E={[math]::Round($_.Free/1GB,1)}},
-    @{N='Used%';E={[math]::Round($_.Used/($_.Used+$_.Free)*100,1)}} | Format-Table -AutoSize
+df -h -x tmpfs -x devtmpfs -x overlay -x squashfs
 
 echo ""
 echo "=== RECENT SYSTEM EVENTS ==="
-try {
-    Get-WinEvent -LogName System -MaxEvents 10 2>/dev/null | 
-        Where-Object { $_.LevelDisplayName -match 'Error|Warning|Critical' } |
-        Select-Object TimeCreated, Id, LevelDisplayName, @{N='Message(truncated)';E={$_.Message.Substring(0, [Math]::Min(100, $_.Message.Length))}} |
-        Format-Table -AutoSize
-} catch {
-    echo "(WinEvent access requires admin or limited logs available)"
-    echo "--- Application errors ---"
-    try {
-        Get-WinEvent -LogName Application -MaxEvents 5 2>/dev/null |
-            Where-Object { $_.LevelDisplayName -match 'Error|Critical' } |
-            Select-Object TimeCreated, Id, LevelDisplayName | Format-Table -AutoSize
-    } catch { echo "(application log not available)" }
-}
+journalctl -p warning -n 10 --no-pager 2>/dev/null ||
+    echo "(journald 不可用或当前用户无权限读取系统日志)"
 ```
 
 ### Step 2: 分析并生成报告
@@ -139,7 +98,7 @@ try {
 将完整报告写入沙箱输出路径：
 
 ```
-/opt/GenericAgent/sandbox/reports\system_monitor_YYYY-MM-DD.md
+/opt/GenericAgent/sandbox/reports/system_monitor_YYYY-MM-DD.md
 ```
 
 ## 成功标准
@@ -151,17 +110,17 @@ try {
 
 ## 验证命令
 
-```powershell
+```bash
 # 检查输出文件存在且非空
-$reportPath = "/opt/GenericAgent/sandbox/reports\system_monitor_$(Get-Date -Format 'yyyy-MM-dd').md"
-(Get-Content $reportPath | Measure-Object -Line).Lines
+REPORT=/opt/GenericAgent/sandbox/reports/system_monitor_$(date +%Y-%m-%d).md
+wc -l < "$REPORT"
 
 # 检查所有 7 个分区标题是否存在
-Select-String -Path $reportPath -Pattern '系统概览|内存状态|TOP5|Agent 进程|磁盘状态|系统日志|健康评分'
-# 期望: >= 7
+grep -E '系统概览|内存状态|TOP5|Agent 进程|磁盘状态|系统日志|健康评分' "$REPORT"
+# 期望: >= 7 个匹配
 
 # 检查健康评分数值
-Select-String -Path $reportPath -Pattern '\d+/100'
+grep -E '[0-9]+/100' "$REPORT"
 # 期望: 输出格式如 "99/100"
 ```
 
@@ -169,8 +128,8 @@ Select-String -Path $reportPath -Pattern '\d+/100'
 
 | 尝试次数 | 操作 |
 |---------|------|
-| 第 1 次失败 | 检查单个命令是否因权限或工具缺失报错；对 `Get-WinEvent` 失败跳过该命令 |
-| 第 2 次失败 | 跳过失败的命令，用 `try/catch` 兜底；继续生成不完整报告 |
+| 第 1 次失败 | 检查单个命令是否因权限或工具缺失报错；对 `journalctl` 失败（无 journald）跳过该命令 |
+| 第 2 次失败 | 跳过失败的命令，用 `|| echo` 兜底并继续；生成不完整报告 |
 | 第 3 次失败 | 请求用户介入 |
 
 ## 人为确认点
@@ -179,7 +138,7 @@ Select-String -Path $reportPath -Pattern '\d+/100'
 
 ## 预期输出
 
-报告写入：`/opt/GenericAgent/sandbox/reports\system_monitor_YYYY-MM-DD.md`
+报告写入：`/opt/GenericAgent/sandbox/reports/system_monitor_YYYY-MM-DD.md`
 
 ## 版本记录
 
@@ -187,6 +146,7 @@ Select-String -Path $reportPath -Pattern '\d+/100'
 |------|------|------|
 | v1 | 2026-06-09 | 基于 system monitor 任务第一遍成功运行结晶 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生 PowerShell 命令和 WMI/CIM 接口 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：ps/free/df/lscpu/journalctl 替代 PowerShell/WMI |
 
 ## Provenance
 

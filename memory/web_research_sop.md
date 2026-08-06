@@ -13,9 +13,9 @@
 对指定话题进行低风险网页调研，支持来源捕获和交叉验证。只做浏览/阅读/总结，不做账号操作或表单提交。
 
 ## Path Rule (CRITICAL)
-All output paths MUST be absolute. The agent's CWD during `--task` execution is `temp\`, so relative paths like `sandbox/reports\` will resolve incorrectly. Always use:
-- `/opt/GenericAgent/sandbox/reports\` for reports
-- `/opt/GenericAgent/sandbox/workspace\` for workspace files
+All output paths MUST be absolute. The agent's CWD during `--task` execution is `temp/`, so relative paths like `sandbox/reports/` will resolve incorrectly. Always use:
+- `/opt/GenericAgent/sandbox/reports/` for reports
+- `/opt/GenericAgent/sandbox/workspace/` for workspace files
 
 ## 前置条件
 
@@ -107,17 +107,17 @@ text = resp.read().decode("utf-8", errors="replace")
 
 ## 输出
 
-调研保存在沙箱中（`/opt/GenericAgent/sandbox\`），包含:
+调研保存在沙箱中（`/opt/GenericAgent/sandbox/`），包含:
 - 来源列表（URL + HTTP 状态码）
 - 每个来源提取的内容摘要
 - 交叉验证结论
 
 ## 验证命令
 
-```powershell
+```bash
 # 检查调研结果文件
-ls /opt/GenericAgent/sandbox\web_research_*.md
-Select-String -Path /opt/GenericAgent/sandbox\web_research_*.md -Pattern 'HTTP 200|交叉验证'
+ls /opt/GenericAgent/sandbox/web_research_*.md
+grep -E 'HTTP 200|交叉验证' /opt/GenericAgent/sandbox/web_research_*.md
 ```
 
 ## 演示示例
@@ -158,3 +158,4 @@ Select-String -Path /opt/GenericAgent/sandbox\web_research_*.md -Pattern 'HTTP 2
 | v1 | 2026-06-08 | 基于 Cold Start Task 5 经验结晶，含直接 HTTP 和浏览器双路径 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径 |
 | v3 | 2026-06-11 | 新增 web_fetch 首选路径，urllib 回退；记录 DuckDuckGo 搜索被拦截的环境限制 |
+| v4 | 2026-08-06 | Linux 化：路径分隔符与验证命令迁移至 Linux bash（Ubuntu 24.04，root） |

@@ -65,3 +65,4 @@ This file is the stable startup profile for this GenericAgent instance. Read it 
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | Linux 化：环境基线确认为 Ubuntu 24.04 root，bash 环境 |

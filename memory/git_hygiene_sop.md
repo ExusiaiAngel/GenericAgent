@@ -15,7 +15,7 @@
 
 1. 已读取 `memory/sandbox_policy.md` — 确认写入边界
 2. 已读取 `memory/personal_bootstrap_profile.md` — 确认用户偏好
-3. Windows 环境可用，`git` 命令可用，工作区为 Git 仓库
+3. Linux bash 环境可用（Ubuntu 24.04，root），`git` 命令可用，工作区为 Git 仓库
 
 ## 输入
 
@@ -23,24 +23,22 @@
 
 ## 步骤
 
-### Step 1: 一次性数据采集（批量 PowerShell）
+### Step 1: 一次性数据采集（批量 bash）
 
 将所有检查子命令合并为单个脚本执行，减少 round-trip：
 
-```powershell
-$repo = "/opt/GenericAgent"
-Set-Location $repo
+```bash
+repo="/opt/GenericAgent"
+cd "$repo"
 
 echo "=== WORKSPACE STATUS ==="
 git status --short 2>&1
 echo "--- DIFF STAT ---"
 git diff --stat 2>&1
 echo "--- UNTRACKED SIZE ---"
-git ls-files --others --exclude-standard 2>$null | ForEach-Object {
-    $f = $_
-    $item = ls -la $_ 2>/dev/null
-    if ($item) { echo "$($item.Length) $_" }
-}
+git ls-files --others --exclude-standard 2>/dev/null | while read -r f; do
+    stat -c '%s %n' "$f" 2>/dev/null
+done
 
 echo ""
 echo "=== BRANCHES ==="
@@ -60,30 +58,28 @@ git remote -v 2>&1
 
 echo ""
 echo "=== GITIGNORE ==="
-Get-Content .gitignore 2>/dev/null
-if (-not $?) { echo "NO .gitignore FOUND" }
+cat .gitignore 2>/dev/null || echo "NO .gitignore FOUND"
 
 echo ""
 echo "=== LARGE UNTRACKED FILES (>1MB) ==="
-git ls-files --others --exclude-standard 2>$null | ForEach-Object {
-    $item = ls -la $_ 2>/dev/null
-    if ($item -and $item.Length -gt 1048576) {
-        $sizeMB = [math]::Round($item.Length / 1MB, 2)
-        echo "$_ : ${sizeMB}MB"
-    }
-}
+git ls-files --others --exclude-standard 2>/dev/null | while read -r f; do
+    size=$(stat -c %s "$f" 2>/dev/null)
+    if [ -n "$size" ] && [ "$size" -gt 1048576 ]; then
+        sizeMB=$(awk "BEGIN {printf \"%.2f\", $size/1048576}")
+        echo "$f : ${sizeMB}MB"
+    fi
+done
 
 echo ""
 echo "=== UNTRACKED DIRECTORIES TOTAL SIZE ==="
-git ls-files --others --exclude-standard --directory 2>$null | 
-    ForEach-Object { $_ -replace '/[^/]*$', '' } | Sort-Object -Unique | ForEach-Object {
-    $dir = $_
-    if (Test-Path $dir) {
-        $size = (ls $dir -Recurse 2>/dev/null | Measure-Object Length -Sum).Sum
-        $sizeMB = [math]::Round(($size / 1MB), 2)
+git ls-files --others --exclude-standard --directory 2>/dev/null |
+    sed 's|/[^/]*$||' | sort -u | while read -r dir; do
+    if [ -d "$dir" ]; then
+        sizeKB=$(du -sk "$dir" 2>/dev/null | cut -f1)
+        sizeMB=$(awk "BEGIN {printf \"%.2f\", $sizeKB/1024}")
         echo "$dir : ${sizeMB}MB"
-    }
-}
+    fi
+done
 ```
 
 ### Step 2: 分析并生成报告
@@ -108,7 +104,7 @@ git ls-files --others --exclude-standard --directory 2>$null |
 将完整报告写入沙箱输出路径：
 
 ```
-/opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt
+/opt/GenericAgent/sandbox/workspace/git_hygiene_task/output.txt
 ```
 
 ## 成功标准
@@ -122,21 +118,23 @@ git ls-files --others --exclude-standard --directory 2>$null |
 
 ## 验证命令
 
-```powershell
+```bash
+REPORT=/opt/GenericAgent/sandbox/workspace/git_hygiene_task/output.txt
+
 # 检查输出文件存在且非空
-(Get-Content /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt | Measure-Object -Line).Lines
+wc -l < "$REPORT"
 
 # 检查工作区状态标记
-Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern 'CLEAN|DIRTY'
-# 期望: >= 1
+grep -E 'CLEAN|DIRTY' "$REPORT"
+# 期望: >= 1 个匹配
 
 # 检查 .gitignore 审计章节存在
-Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern 'gitignore|\.gitignore'
-# 期望: >= 3
+grep -E 'gitignore|\.gitignore' "$REPORT"
+# 期望: >= 3 个匹配
 
 # 检查关键分区标题存在
-Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt -Pattern '工作区|分支|Stash|gitignore|大文件|远程|总结|建议'
-# 期望: >= 5
+grep -E '工作区|分支|Stash|gitignore|大文件|远程|总结|建议' "$REPORT"
+# 期望: >= 5 个匹配
 ```
 
 ## 失败恢复
@@ -151,11 +149,11 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.
 
 - **`.gitignore` 修改**：本 SOP 仅建议添加 `.gitignore` 规则，**不自动修改文件**。
 - **大文件处理**：发现超大未跟踪文件时，报告风险和建议，**不自动删除或移动文件**。
-- 所有检查均为只读操作（`git status`, `Get-Content`, `Get-Item`, `git ls-files --others`），不执行 `git add`, `git commit`, `git stash`, `git rm` 等写操作。
+- 所有检查均为只读操作（`git status`, `cat`, `ls -la`, `git ls-files --others`），不执行 `git add`, `git commit`, `git stash`, `git rm` 等写操作。
 
 ## 预期输出
 
-报告写入：`/opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.txt`
+报告写入：`/opt/GenericAgent/sandbox/workspace/git_hygiene_task/output.txt`
 
 ## 版本记录
 
@@ -163,6 +161,7 @@ Select-String -Path /opt/GenericAgent/sandbox/workspace\git_hygiene_task\output.
 |------|------|------|
 | v1 | 2026-06-09 | 基于 git hygiene 任务 Pass 1 成功运行结晶（3 rounds） |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径和 PowerShell 命令 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：采集脚本与验证命令 Linux 化，git 命令不变 |
 
 ## Provenance
 

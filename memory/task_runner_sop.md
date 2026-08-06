@@ -7,7 +7,7 @@
 
 ## 0. WARNING Input Security Rules
 
-> Command-line arguments are world-readable via `ps aux` / `ps aux`.
+> Command-line arguments are world-readable via `ps aux` / `/proc/<pid>/cmdline`.
 
 ### 0.1 Prefer `input.txt` over `--input`
 
@@ -18,28 +18,28 @@
 | Production / supervisor tasks | Write to `task_dir/input.txt` | Safe |
 | Short non-sensitive debug (<=200 chars) | `--input` allowed | Low |
 
-```powershell
+```bash
 # CORRECT -- write prompt to file, no cmdline exposure
-Set-Content -Path /opt/GenericAgent/temp\task_dir\input.txt -Value "long prompt..."
-python agentmain.py --task /opt/GenericAgent/temp\task_dir --once
+printf '%s\n' "long prompt..." > /opt/GenericAgent/temp/task_dir/input.txt
+python3 agentmain.py --task /opt/GenericAgent/temp/task_dir --once
 
 # WRONG -- prompt leaks to cmdline
-python agentmain.py --task /opt/GenericAgent/temp\task_dir --input "long sensitive prompt..." --once
+python3 agentmain.py --task /opt/GenericAgent/temp/task_dir --input "long sensitive prompt..." --once
 ```
 
 ---
 
 ## 1. Quick Reference
 
-```powershell
+```bash
 # Supervisor Mode (background Popen): writes pid/stdout.log/stderr.log/done.json
-Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task /opt/GenericAgent/temp --once
+printf '%s\n' "prompt" > input.txt && python3 agentmain.py --task /opt/GenericAgent/temp --once
 
 # Debug Mode (foreground inline): stdout + output.txt + done.json
-Set-Content -Path input.txt -Value "prompt" | python agentmain.py --task /opt/GenericAgent/temp --nobg --once
+printf '%s\n' "prompt" > input.txt && python3 agentmain.py --task /opt/GenericAgent/temp --nobg --once
 
 # --input shortcut (<=200 chars, no secrets, one-off only)
-python agentmain.py --task /opt/GenericAgent/temp --input "short" --nobg --once
+python3 agentmain.py --task /opt/GenericAgent/temp --input "short" --nobg --once
 ```
 
 ---
@@ -48,10 +48,10 @@ python agentmain.py --task /opt/GenericAgent/temp --input "short" --nobg --once
 
 | Input Pattern | Example | Resolves To |
 |---------------|---------|-------------|
-| Absolute path | `D:\temp\my_task` | `D:\temp\my_task` (passed as-is) |
-| Relative (./ or ../) | `.\tasks\x` | Relative to `agentmain.py` dir |
-| Simple name | `my_task` | `<script_dir>\temp\my_task` |
-| Nested path | `a\b\c` | `<script_dir>\temp\a\b\c` |
+| Absolute path | `/data/temp/my_task` | `/data/temp/my_task` (passed as-is) |
+| Relative (./ or ../) | `./tasks/x` | Relative to `agentmain.py` dir |
+| Simple name | `my_task` | `<script_dir>/temp/my_task` |
+| Nested path | `a/b/c` | `<script_dir>/temp/a/b/c` |
 | Empty / whitespace | `""` / `"   "` | **ValueError** (rejected) |
 
 > **Always use absolute paths for supervisor/automated tasks** -- no ambiguity.
@@ -60,23 +60,22 @@ python agentmain.py --task /opt/GenericAgent/temp --input "short" --nobg --once
 
 When a task asks for deliverables in a sandbox task directory, write each artifact
 with its absolute path there. Relative `file_write` paths are resolved under
-GenericAgent's default working area, commonly `<script_dir>\temp\`, and will fail
+GenericAgent's default working area, commonly `<script_dir>/temp/`, and will fail
 artifact-location acceptance.
 
 Before claiming completion, inventory the requested absolute paths:
 
-```powershell
-$expected = @('expected_a.md', 'expected_b.md')
-foreach ($f in $expected) {
-    if (-not (Test-Path "$env:TASK_DIR\$f")) { Write-Warning "MISSING: $env:TASK_DIR\$f" }
-}
+```bash
+for f in expected_a.md expected_b.md; do
+    if [ ! -f "$TASK_DIR/$f" ]; then echo "MISSING: $TASK_DIR/$f"; fi
+done
 ```
 
 ---
 
 ## 3. Task Lifecycle (`--once`)
 
-**Background** (default, no `--nobg`): Creates `task_dir\`, writes PID to `pid`, captures stdout->`stdout.log`, stderr->`stderr.log`, on completion writes `done.json`+`output.txt`, child exits.
+**Background** (default, no `--nobg`): Creates `task_dir/`, writes PID to `pid`, captures stdout->`stdout.log`, stderr->`stderr.log`, on completion writes `done.json`+`output.txt`, child exits.
 
 **Foreground** (`--nobg --once`): Runs inline, no subprocess, stdout direct, writes `output.txt`+`done.json`, exits after one LLM round.
 
@@ -98,19 +97,19 @@ foreach ($f in $expected) {
 
 **Only poll `done.json`** -- do NOT rely on process exit.
 
-```powershell
-if (Test-Path "$env:TASK_DIR\done.json") {
-    python -c @'
-import json
-d = json.load(open(r'$env:TASK_DIR\done.json'))
+```bash
+if [ -f "$TASK_DIR/done.json" ]; then
+    python3 - <<'PY'
+import json, os
+d = json.load(open(os.path.join(os.environ['TASK_DIR'], 'done.json')))
 print(f'Status: {d["status"]}, Exit: {d["exit_code"]}')
-'@
-}
+PY
+fi
 ```
 
 Schema: `{"status":"completed","exit_code":0}` or `{"status":"error","exit_code":1,"error":"input.txt not found at ..."}`
 
-Poll loop: `while (-not (Test-Path "$env:TASK_DIR\done.json")) { Start-Sleep -Seconds 5 } ; Get-Content "$env:TASK_DIR\output.txt"`
+Poll loop: `until [ -f "$TASK_DIR/done.json" ]; do sleep 5; done; cat "$TASK_DIR/output.txt"`
 
 ---
 
@@ -118,10 +117,10 @@ Poll loop: `while (-not (Test-Path "$env:TASK_DIR\done.json")) { Start-Sleep -Se
 
 | Step | Command | What to Look For |
 |------|---------|-----------------|
-| 1 | `Get-Content "$env:TASK_DIR\done.json" \| ConvertFrom-Json` | `status`, `exit_code`, `error` field |
-| 2 | `Get-Content "$env:TASK_DIR\stderr.log"` | Python traceback, API errors |
-| 3 | `Get-Content "$env:TASK_DIR\stdout.log"` | Progress messages, last output |
-| 4 | `Test-Path "$env:TASK_DIR\input.txt"` | Missing input? Empty file? |
+| 1 | `cat "$TASK_DIR/done.json" \| python3 -m json.tool` | `status`, `exit_code`, `error` field |
+| 2 | `cat "$TASK_DIR/stderr.log"` | Python traceback, API errors |
+| 3 | `cat "$TASK_DIR/stdout.log"` | Progress messages, last output |
+| 4 | `ls -la "$TASK_DIR/input.txt"` | Missing input? Empty file? |
 
 Common errors: `"input.txt not found"` -> missing input; LLM exception -> check API key/network.
 
@@ -131,43 +130,44 @@ Common errors: `"input.txt not found"` -> missing input; LLM exception -> check 
 
 | Anti-pattern | Why |
 |-------------|-----|
-| `Start-Process python -ArgumentList 'agentmain.py' -NoNewWindow` | No PID tracking, no log capture, orphan risk |
-| `Stop-Process -Id (Get-Content pid)` without verifying | May kill unrelated process |
+| `python3 agentmain.py --task ... &`（裸后台启动，不写 pid） | No PID tracking, no log capture, orphan risk |
+| `kill $(cat pid)` without verifying | May kill unrelated process |
 | `os.kill()` in Python | Banned |
-| Unconditional `Stop-Process -Name python*` | Kills the supervisor itself |
+| Unconditional `pkill -f python` | Kills the supervisor itself |
 | `--input` for long/sensitive prompts | Content leaks via cmdline |
-| Relative paths for requested artifacts | May write to `<script_dir>\temp\` instead of the sandbox task directory |
+| Relative paths for requested artifacts | May write to `<script_dir>/temp/` instead of the sandbox task directory |
 
 ---
 
 ## 7. Correct Cleanup
 
-```powershell
+```bash
 # Verify PID belongs to agentmain.py before killing
-$taskDir = "/opt/GenericAgent/temp\task_dir"
-$pid = Get-Content "$taskDir\pid" 2>/dev/null
-if ($pid -and (ps aux | grep -Id $pid 2>/dev/null) -and 
-    (ps aux -Filter "ProcessId=$pid" | Where-Object CommandLine -match 'agentmain')) {
-    Stop-Process -Id $pid
-}
+TASK_DIR="/opt/GenericAgent/temp/task_dir"
+pid=$(cat "$TASK_DIR/pid" 2>/dev/null)
+if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1 &&
+    tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'agentmain'; then
+    kill "$pid"
+fi
 
 # Or use _stop sentinel for graceful abort
-Set-Content -Path "$taskDir\_stop" -Value ""
+touch "$TASK_DIR/_stop"
 ```
 
 ---
 
 ## 8. Post-Spawn Verification
 
-```powershell
-$taskDir = "/opt/GenericAgent/temp\task_dir"
-python /opt/GenericAgent/memory\task_watchdog.py "$taskDir" --timeout 300 --interval 5 --json
+```bash
+TASK_DIR="/opt/GenericAgent/temp/task_dir"
+python3 /opt/GenericAgent/memory/task_watchdog.py "$TASK_DIR" --timeout 300 --interval 5 --json
 
 # Security: verify no prompt in cmdline
-if ($pid) {
-    $cmdline = (ps aux -Filter "ProcessId=$pid").CommandLine
-    if ($cmdline -match '--input') { Write-Warning "--input used, prompt visible" }
-}
+if [ -n "$pid" ]; then
+    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- '--input'; then
+        echo "WARNING: --input used, prompt visible"
+    fi
+fi
 ```
 
 Use formal watchdog as primary gate; hand-written `ps`/`grep` is secondary.
@@ -179,7 +179,7 @@ Use formal watchdog as primary gate; hand-written `ps`/`grep` is secondary.
 Process command lines are world-readable. Any user, monitoring tool, CI pipeline, or audit framework can see `--input` values. Writing to `input.txt` keeps content off the command line:
 
 ```
-python agentmain.py --task /opt/GenericAgent/temp\task_dir --once
+python3 agentmain.py --task /opt/GenericAgent/temp/task_dir --once
 ```
 
 ## 版本记录
@@ -187,4 +187,5 @@ python agentmain.py --task /opt/GenericAgent/temp\task_dir --once
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | 迁移至 Linux bash（Ubuntu 24.04，root）：命令、路径、生命周期文件示例全部 Linux 化 |
 

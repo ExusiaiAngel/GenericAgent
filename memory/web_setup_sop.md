@@ -22,12 +22,12 @@
 ### Edge 特有说明
 - 扩展管理页：`edge://extensions`
 - 开发者模式开关在页面左下角（Chrome 在右上角）
-- 浏览器进程名：`msedge.exe`（Chrome 为 `chrome.exe`）
+- 浏览器进程名：`microsoft-edge`（Chrome 为 `chrome`）
 - 其余步骤与 Chrome 完全一致
 
 ## 验证
 ⚠ web_scan 显示「没有可用标签页」不一定是扩展没装好，可能是浏览器未打开或只有 blank 页。
-此时禁止乱试，先用 `start "" "https://www.baidu.com"` 打开一个正常页面，再 `web_scan` 确认。
+此时禁止乱试，先用 `xdg-open "https://www.baidu.com"` 打开一个正常页面，再 `web_scan` 确认。
 若仍不可用，无法自动探测默认浏览器是哪个、插件装在了哪个浏览器、或是否已安装——此时请求用户协助。
 
 ## 版本记录
@@ -35,4 +35,5 @@
 | 版本 | 日期 | 变更 |
 |------|------|------|
 | v1 | 2026-06-11 | 自动生成版本记录 |
+| v3 | 2026-08-06 | 迁移至 Linux：进程名改 microsoft-edge/chrome，打开页面改用 xdg-open |
 
