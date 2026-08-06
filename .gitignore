@@ -198,3 +198,5 @@ scheduler_write_probe.py
 secret_residue_audit.py
 runtime.conf
 sub_agent.py
+*.bak*
+*.bak_*
