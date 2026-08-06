@@ -47,7 +47,7 @@ All output paths MUST be absolute. The agent's CWD during `--task` execution is 
 
 使用 `code_run(python)` + `urllib`（标准库，无需装包）。
 
-注意：**`web_search`（DuckDuckGo）在此环境被 captcha 拦截**，不要依赖搜索后端。直接确定目标 URL 进行抓取。
+注意：**`web_search` 首选 Tavily API**（`TAVILY_API_KEY` 配置于 .env，走 GENERICAGENT_PROXY 代理），质量高且稳定；未配置/失败时自动回落自建后端（curl_cffi/urllib）。
 
 **步骤:**
 1. 确定目标 URL 列表
@@ -143,7 +143,7 @@ grep -E 'HTTP 200|交叉验证' /opt/GenericAgent/sandbox/web_research_*.md
 | 第 2 次 | urllib 被拦 → 换备用来源 URL |
 | 第 3 次 | 全部失败 → 请求用户提供替代来源或允许更高风险操作 |
 
-> ⚠️ 已知环境限制：`web_search`（DuckDuckGo）被 captcha 拦截，**不要依赖搜索后端**。直接确定目标 URL 进行抓取。
+> ✅ `web_search` 首选 Tavily API（2026-08-06 集成），key 在 `TAVILY_API_KEY`，经代理访问；搜索不可用时可直连目标 URL 抓取。
 
 ## 人为确认点
 
@@ -158,4 +158,5 @@ grep -E 'HTTP 200|交叉验证' /opt/GenericAgent/sandbox/web_research_*.md
 | v1 | 2026-06-08 | 基于 Cold Start Task 5 经验结晶，含直接 HTTP 和浏览器双路径 |
 | v2 | 2026-06-10 | 迁移至 Windows 原生路径 |
 | v3 | 2026-06-11 | 新增 web_fetch 首选路径，urllib 回退；记录 DuckDuckGo 搜索被拦截的环境限制 |
+| v4 | 2026-08-06 | Tavily API 首选后端（TAVILY_API_KEY + 代理）；DuckDuckGo 拦截限制已解除 |
 | v4 | 2026-08-06 | Linux 化：路径分隔符与验证命令迁移至 Linux bash（Ubuntu 24.04，root） |

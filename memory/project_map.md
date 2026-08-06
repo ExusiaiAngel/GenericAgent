@@ -132,7 +132,7 @@ python agentmain.py
 - **L4 自动挖掘管线** — `salient_mining.py` → `reflect/scheduler.py` 每10分钟增量运行 → `global_mem.txt` L2 事实更新。状态文件: `history_insight/` (processed_session + activity_knowledge + emotional_events)
 - **health_check_sop.md** — 每日健康检查结晶SOP，组合 env_audit + dep_check + git_hygiene 三个 SOP，一键生成仪表盘报告。触发词："每日健康检查" / "health check"。
 - **reusable_task_runner_sop.md** — 可复用任务运行器 SOP，沉淀 `--task --once` 模式（经10+轮次验证），标准化 input.txt 协议 + task_watchdog.py 监督。
-- **web_search + web_fetch** — 11 工具链，多后端搜索(DuckDuckGo→Bing)，curl_cffi Chrome TLS 伪装，agent 可独立上网调研。
+- **web_search + web_fetch** — 11 工具链，Tavily API 首选（TAVILY_API_KEY + 代理），失败回落 curl_cffi 多后端；web_scan/web_execute_js 经 tmwd_cdp_bridge 控制 Chrome for Testing（ga-browser 服务）。
 - **config_check.py** — 18 项自检工具，启动时自动运行(env/imports/config/tools/memory/system)。
 - **new_machine_setup_sop.md** — 5 步新机就绪，从零到 GenericAgent 启动。
 - **next_phase_goals.md** — Phase 2 进化路线图：5 域 16 目标, 3 阶段时间线。
