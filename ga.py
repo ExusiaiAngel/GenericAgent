@@ -820,6 +820,48 @@ def web_execute_js(script, switch_tab_id=None, no_monitor=False):
         return result
     except Exception as e: return {"status": "error", "msg": format_error(e)}
 
+def _tavily_rows(query, max_results, timeout=15):
+    """Tavily API search. Returns rows, or None when not configured/failed."""
+    try:
+        import mykey
+        key = getattr(mykey, "tavily_api_key", "") or ""
+    except Exception:
+        key = ""
+    if not key:
+        return None
+    payload = {
+        "api_key": key,
+        "query": query,
+        "max_results": max_results,
+        "search_depth": "basic",
+        "include_answer": False,
+    }
+    proxy = os.environ.get("GENERICAGENT_PROXY", "") or None
+    try:
+        import requests
+        resp = requests.post(
+            "https://api.tavily.com/search",
+            json=payload,
+            timeout=timeout,
+            proxies={"http": proxy, "https": proxy} if proxy else None,
+        )
+        data = resp.json()
+    except Exception:
+        return None
+    if resp.status_code != 200 or not isinstance(data, dict):
+        return None
+    rows = [
+        {
+            "title": (r.get("title") or "")[:200],
+            "url": (r.get("url") or ""),
+            "snippet": (r.get("content") or "")[:400],
+        }
+        for r in data.get("results", [])
+        if r.get("url")
+    ]
+    return rows or None
+
+
 def web_search(query, max_results=8):
     """Search the web using multiple backends with fallback. Returns {status, results, backend}."""
     q = urllib.parse.quote(query.strip())
@@ -838,6 +880,17 @@ def web_search(query, max_results=8):
         for row in rows or []:
             collected.append(dict(row, backend=backend_name))
         return _select_relevant_results(query, collected, max_results)
+
+    # Tavily API first (high quality, configured key only; falls through silently)
+    tavily_rows = _tavily_rows(query, max_results)
+    if tavily_rows:
+        results = accept_rows("tavily", tavily_rows)
+        if results:
+            return {
+                "status": "success", "results": results,
+                "backend": "tavily", "backends_tried": backends_tried,
+                "query": query,
+            }
 
     # Try curl_cffi first (Chrome TLS fingerprint — bypasses most bot detection)
     try:
