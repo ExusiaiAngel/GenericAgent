@@ -238,13 +238,14 @@ class ChangeApprovalManager:
             getattr(identity, "conversation", ""),
             getattr(identity, "actor", ""),
         )
+        platform = str(getattr(identity, "platform", "")).strip().lower()
         if (
             not is_private
-            or str(getattr(identity, "platform", "")).strip().lower() != "qq"
+            or platform not in {"qq", "telegram"}
             or not all(str(value).strip() for value in identity_values)
         ):
             raise PermissionError(
-                "source approver binding requires a complete private QQ identity"
+                "source approver binding requires a complete private QQ/Telegram identity"
             )
         with self._exclusive_lock():
             return self._bind_locked(code, identity)

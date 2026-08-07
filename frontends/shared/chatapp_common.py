@@ -32,6 +32,12 @@ TELEGRAM_MENU_COMMANDS = (
     ("btw", "临时插问主 agent 进展，不打断主线"),
     ("review", "in-session code review；/review scope 指定范围"),
     ("llm", "查看模型列表；/llm n 切换到指定模型"),
+    ("bind", "绑定审批者身份（私聊，需服务器发码）"),
+    ("sc_list", "列出待审批变更提案"),
+    ("sc_show", "查看提案详情；/sc_show <ID>"),
+    ("sc_approve", "批准提案；/sc_approve <ID>"),
+    ("sc_reject", "拒绝提案；/sc_reject <ID>"),
+    ("sc_rollback", "回滚已应用提案；/sc_rollback <ID>"),
 )
 
 

@@ -562,14 +562,14 @@ class GenericAgent:
             except Exception as settlement_error:
                 print(f"[MEMORY-AUDIT] settlement_error={format_error(settlement_error)}")
             
-    def put_task(self, query, source="user", images=None, max_turns=None, display_queue=None, reset_history=False):
+    def put_task(self, query, source="user", images=None, max_turns=None, display_queue=None, reset_history=False, identity=None):
         if display_queue is None:
             display_queue = queue.Queue()
         from frontends.shared.task_protocol import turns_for_source
         reset_history = bool(reset_history or source == "reflect")
         max_turns = turns_for_source(source, requested=max_turns)
         try:
-            self.task_queue.put_nowait({"query": query, "source": source, "images": images or [], "output": display_queue, "max_turns": max_turns, "reset_history": reset_history})
+            self.task_queue.put_nowait({"query": query, "source": source, "images": images or [], "output": display_queue, "max_turns": max_turns, "reset_history": reset_history, "conversation_identity": dict(identity or {})})
         except queue.Full:
             display_queue.put({
                 "done": "",

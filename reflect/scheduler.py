@@ -37,7 +37,7 @@ _L4_INTERVAL = 600      # L4 archive check interval (seconds)
 _l4_t = 0               # last L4 archive time
 _MINING_INTERVAL = 600  # salient mining interval (seconds, 10min)
 _mining_t = 0           # last mining run time
-_DS_INTERVAL = 3600  # DeepSeek watch interval (seconds, 1h)
+_DS_INTERVAL = 1200  # DeepSeek watch interval (seconds, 20min)
 
 
 def _l4_result_is_actionable(result):
@@ -183,7 +183,7 @@ def check():
 
     return None
 
-# ---- DeepSeek watch daemon thread (guaranteed ~1h cadence, silent unless changed) ----
+# ---- DeepSeek watch daemon thread (guaranteed ~20min cadence, silent unless changed) ----
 def _ds_watch_loop():
     import sys
     _time.sleep(60)  # let agent boot; first check ~1min after start
@@ -207,7 +207,7 @@ def _start_ds_watch():
             return  # already running (survives scheduler reload)
     th = threading.Thread(target=_ds_watch_loop, name='ds_watch_thread', daemon=True)
     th.start()
-    _logger.info('DeepSeek watch thread started (1h interval)')
+    _logger.info('DeepSeek watch thread started (20min interval)')
 
 
 _start_ds_watch()

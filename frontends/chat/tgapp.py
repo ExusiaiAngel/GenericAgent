@@ -139,10 +139,10 @@ def _maybe_partial_code_fence(line):
 
 def _extract_turn_summary(raw_text):
     search_text = _TURN_SUMMARY_SEARCH_STRIP_RE.sub("", raw_text or "")
-    match = _TURN_SUMMARY_RE.search(search_text)
-    if not match:
+    matches = _TURN_SUMMARY_RE.findall(search_text)
+    if not matches:
         return ""
-    summary = re.sub(r"\s+", " ", match.group(1)).strip()
+    summary = re.sub(r"\s+", " ", matches[-1]).strip()
     if len(summary) > _TURN_SUMMARY_LIMIT:
         summary = summary[:_TURN_SUMMARY_LIMIT - 3].rstrip() + "..."
     return summary
@@ -848,6 +848,104 @@ async def _stream(dq, msg):
         except RetryAfter as retry_exc:
             print(f"[TG stream error notice retry_after] {type(retry_exc).__name__}: {retry_exc}", flush=True)
 
+
+def _conversation_identity(update, ctx):
+    """Build transport-neutral identity from a Telegram update."""
+    user = update.effective_user
+    chat = update.effective_chat
+    return {
+        "platform": "telegram",
+        "account": getattr(ctx.bot, "username", "") or "telegram",
+        "conversation": str(getattr(chat, "id", "") or ""),
+        "actor": str(getattr(user, "id", "") or ""),
+        "name": (getattr(user, "username", "") or getattr(user, "first_name", "") or ""),
+    }
+
+def _sc_identity(update, ctx):
+    from session_store import ConversationIdentity
+    raw = _conversation_identity(update, ctx)
+    return ConversationIdentity(**{key: raw.get(key, "") for key in ("platform", "account", "conversation", "actor")})
+
+def _sc_manager():
+    from change_approval import ChangeApprovalManager, get_change_state_root
+    roots = [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
+    for raw in re.split(r"[,;]", os.environ.get("GENERICAGENT_CHANGE_ROOTS", "")):
+        raw = raw.strip()
+        if raw:
+            roots.append(os.path.abspath(raw))
+    return ChangeApprovalManager(get_change_state_root(), roots)
+
+def _sc_private(message):
+    return getattr(getattr(message, "chat", None), "type", "") == ChatType.PRIVATE
+
+async def _handle_sc_bind(update, ctx, code):
+    if not code:
+        return await update.message.reply_text(
+            "用法: /bind <绑定码>\n绑定码由服务器执行: python change_approval.py issue-code --project-root /opt/GenericAgent"
+        )
+    if not _sc_private(update.message):
+        return await update.message.reply_text("❌ 绑定仅限私聊")
+    try:
+        await asyncio.to_thread(_sc_manager().bind, code, _sc_identity(update, ctx), is_private=True)
+        return await update.message.reply_text("✅ 审批者绑定成功")
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 绑定失败: {exc}")
+
+async def _handle_sc_list(update, ctx):
+    if not _sc_private(update.message):
+        return await update.message.reply_text("❌ 审批命令仅限私聊")
+    try:
+        rows = await asyncio.to_thread(_sc_manager().list_visible, _sc_identity(update, ctx))
+        lines = [f"`{r.get('id', '?')}` [{r.get('status', '?')}] {r.get('path', '')}" for r in rows]
+        return await update.message.reply_text("\n".join(lines) or "(无提案)")
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 列表失败: {exc}")
+
+async def _handle_sc_show(update, ctx, pid):
+    if not pid:
+        return await update.message.reply_text("用法: /sc_show <提案ID>")
+    try:
+        info = await asyncio.to_thread(_sc_manager().show, pid, _sc_identity(update, ctx))
+        lines = [
+            f"ID: {info.get('id', pid)}",
+            f"状态: {info.get('status', '?')}",
+            f"路径: {info.get('path', '')}",
+            f"理由: {info.get('reason', '')}",
+        ]
+        patch_text = info.get("patch") or info.get("diff") or ""
+        if patch_text:
+            lines.append("差异:\n" + patch_text[:2000])
+        return await update.message.reply_text("\n".join(lines)[:4000])
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 查看失败: {exc}")
+
+async def _handle_sc_approve(update, ctx, pid):
+    if not pid:
+        return await update.message.reply_text("用法: /sc_approve <提案ID>")
+    try:
+        result = await asyncio.to_thread(_sc_manager().approve, pid, _sc_identity(update, ctx))
+        return await update.message.reply_text(f"✅ 已批准 {pid}\n{str(result)[:500]}")
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 审批失败: {exc}")
+
+async def _handle_sc_reject(update, ctx, pid):
+    if not pid:
+        return await update.message.reply_text("用法: /sc_reject <提案ID>")
+    try:
+        result = await asyncio.to_thread(_sc_manager().reject, pid, _sc_identity(update, ctx))
+        return await update.message.reply_text(f"✅ 已拒绝 {pid}\n{str(result)[:500]}")
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 拒绝失败: {exc}")
+
+async def _handle_sc_rollback(update, ctx, pid):
+    if not pid:
+        return await update.message.reply_text("用法: /sc_rollback <提案ID>")
+    try:
+        result = await asyncio.to_thread(_sc_manager().rollback, pid, _sc_identity(update, ctx))
+        return await update.message.reply_text(f"✅ 已回滚 {pid}\n{str(result)[:500]}")
+    except Exception as exc:
+        return await update.message.reply_text(f"❌ 回滚失败: {exc}")
+
 def _normalized_command(text):
     parts = (text or "").strip().split(None, 1)
     if not parts: return ''
@@ -888,7 +986,7 @@ async def _handle_review_command(update, ctx, cmd):
         except Q.Empty:
             return await _reply_command_text(update.message, "(review 无输出)")
     _cancel_stream_task(ctx)
-    task_dq = agent.put_task(prompt, source="telegram")
+    task_dq = agent.put_task(prompt, source="telegram", identity=_conversation_identity(update, ctx))
     task = asyncio.create_task(_stream(task_dq, update.message))
     ctx.user_data['stream_task'] = task
 
@@ -897,7 +995,7 @@ async def handle_msg(update, ctx):
     if ALLOWED and uid not in ALLOWED:
         return await update.message.reply_text("no")
     prompt = _build_text_prompt(update.message.text)
-    dq = agent.put_task(prompt, source="telegram")
+    dq = agent.put_task(prompt, source="telegram", identity=_conversation_identity(update, ctx))
     task = asyncio.create_task(_stream(dq, update.message))
     ctx.user_data['stream_task'] = task
 
@@ -951,7 +1049,7 @@ async def handle_ask_callback(update, ctx):
         await _edit_ask_user_result(query, event, selected=selected)
         if query.message is None:
             return
-        dq = agent.put_task(_build_text_prompt(selected), source="telegram")
+        dq = agent.put_task(_build_text_prompt(selected), source="telegram", identity=_conversation_identity(update, ctx))
         task = asyncio.create_task(_stream(dq, query.message))
         ctx.user_data['stream_task'] = task
         return
@@ -971,7 +1069,7 @@ async def handle_ask_callback(update, ctx):
     await _edit_ask_user_result(query, event, selected=selected)
     if query.message is None:
         return
-    dq = agent.put_task(_build_text_prompt(selected), source="telegram")
+    dq = agent.put_task(_build_text_prompt(selected), source="telegram", identity=_conversation_identity(update, ctx))
     task = asyncio.create_task(_stream(dq, query.message))
     ctx.user_data['stream_task'] = task
 
@@ -1056,7 +1154,7 @@ async def handle_photo(update, ctx):
     await file.download_to_drive(os.path.join(_TEMP_DIR, fpath))
     caption = update.message.caption
     prompt = f"[TIPS] 收到{kind}temp/{fpath}\n{caption}" if caption else f"[TIPS] 收到{kind}temp/{fpath}，请等待下一步指令"
-    dq = agent.put_task(prompt, source="telegram")
+    dq = agent.put_task(prompt, source="telegram", identity=_conversation_identity(update, ctx))
     task = asyncio.create_task(_stream(dq, update.message))
     ctx.user_data['stream_task'] = task
 
@@ -1095,6 +1193,18 @@ async def handle_command(update, ctx):
     if op == '/continue':
         if cmd != '/continue': _cancel_stream_task(ctx)
         return await update.message.reply_text(handle_frontend_command(agent, cmd))
+    if op == '/bind':
+        return await _handle_sc_bind(update, ctx, cmd[len('/bind'):].strip() if cmd.startswith('/bind ') else '')
+    if op == '/sc_list':
+        return await _handle_sc_list(update, ctx)
+    if op == '/sc_show':
+        return await _handle_sc_show(update, ctx, cmd[len('/sc_show'):].strip() if cmd.startswith('/sc_show ') else '')
+    if op == '/sc_approve':
+        return await _handle_sc_approve(update, ctx, cmd[len('/sc_approve'):].strip() if cmd.startswith('/sc_approve ') else '')
+    if op == '/sc_reject':
+        return await _handle_sc_reject(update, ctx, cmd[len('/sc_reject'):].strip() if cmd.startswith('/sc_reject ') else '')
+    if op == '/sc_rollback':
+        return await _handle_sc_rollback(update, ctx, cmd[len('/sc_rollback'):].strip() if cmd.startswith('/sc_rollback ') else '')
     return await update.message.reply_text(HELP_TEXT)
 
 if __name__ == '__main__':

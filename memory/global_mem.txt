@@ -27,6 +27,25 @@
 - **Python encoding:** PYTHONIOENCODING=utf-8, PYTHONUTF8=1
 - **Tracked .example:** `mykey_local.py.example` (template only, no actual config)
 
+## Web crawler: Crawl4AI (2026-08-07 v2)
+
+- **venv:** `/opt/GenericAgent/sandbox/workspace/crawl4ai/venv` (isolated; crawl4ai 0.9.2, 95 pkgs)
+- **Browser:** no standalone chromium; CDP reuses ga-browser (127.0.0.1:9222); patchright cache backup deleted 2026-08-07
+- **Run:** `cd /opt/GenericAgent/sandbox/workspace/crawl4ai && ./venv/bin/python demo_crawl.py <url>` (CDP default; `--headless` needs browser reinstall)
+- **Verified:** CDP mode example.com 1.5s OK, memory increment ~0; requires ga-browser running (`systemctl start ga-browser.service`)
+- **Network from this ECS:** news.ycombinator.com unreachable (timeout); python.org/github.com slow but reachable; baidu/deepseek fast
+
+## Memory tuning (2026-08-07)
+
+- **swapfile:** 2GiB at `/swapfile`, persisted via `/etc/fstab` (`/swapfile none swap sw 0 0`), active
+- **Disabled services (cloud unused):** fwupd (masked), ModemManager (disabled), multipathd + multipathd.socket (disabled)
+
+## Systemd services (2026-08-07)
+
+- **genericagent.service** — 主 agentmain 进程（`venv/bin/python agentmain.py --reflect reflect/scheduler.py --verbose`），systemd 管理，`Restart=on-failure`, `RestartSec=10`
+- **改 reflect/ 等源码后必须 `systemctl restart genericagent.service` 才生效**：运行中进程的 `sys.modules` 缓存旧模块，scheduler 线程循环内 `from x import y` 不会重新加载新代码（2026-08-07 验证）
+- 其他相关服务: `genericagent-tg.service`、`zodaccess-singbox.service`、`ga-browser.service`（crawl4ai CDP 依赖）
+
 ## API config
 
 - **Provider:** DeepSeek (via `mykey.py`)
@@ -36,6 +55,9 @@
 - **Proxy:** env var `GENERICAGENT_PROXY` (HTTP proxy for API calls)
 - **Key file:** `mykey.py` reads these env vars and exposes them to `llmcore`
 - **mykeys access:** `import llmcore; llmcore.mykeys` is a plain `dict` (supports `.get()`/`[]`/`.keys()`); loaded from `/opt/GenericAgent/mykey.py`; use `.get()` for optional keys, never log values
+- **Verified 2026-08-07:** GET `/v1/models` + POST `/v1/chat/completions` 均 200 OK；可用模型 `deepseek-v4-flash` / `deepseek-v4-pro`；代理实测 `http://127.0.0.1:1080`
+- **坑:** code_run sandbox 模式无 DEEPSEEK_* env 且看不到 `llmcore.py`/`mykey.py`（host 模式才有）；import llmcore / 测 API 必须用 host 模式
+- **坑:** venv httpx 0.28.1 传代理用 `proxy=` 参数，`proxies=` 会 TypeError
 
 ## Project structure
 
@@ -63,6 +85,7 @@
   - `workspace/` — drafts, experiments, generated files
   - `reports/` — read-only analysis outputs and supervision reports
   - `trash_review/` — files proposed for deletion; never delete originals without confirmation
+- **Safe delete:** 统一用 `/usr/local/bin/safe_delete.sh`（白名单校验后 mv 到 trash_review，确认后才可彻底删）；禁直接 rm（rm -r/find -delete 可绕过拦截）
 - **Temp/scratch:** `temp/` (relative to project root; used by task runner for artifact output)
 - **Backups:** none configured explicitly — use sandbox workspace for safe copies
 
