@@ -908,8 +908,12 @@ def _ensure_text_block(blocks):
     if any(b.get("type") == "text" for b in blocks): return None
     th = next((b.get("thinking", "") for b in blocks if b.get("type") == "thinking"), "")
     if not th: return None
-    line = th.strip().split('\n', 1)[0]
-    txt = "<summary>" + (line[:60] + '...' if len(line) > 60 else line) + "</summary>"
+    # 模型只思考未输出 text 时，把思考内容作为答案兜底（截断过长推理），
+    # 而不是只给 60 字符开头——否则 TG 端只能显示 "..."。
+    th = th.strip()
+    if len(th) > 3000:
+        th = th[:2997].rstrip() + "..."
+    txt = "<summary>" + th + "</summary>"
     blocks.insert(1, {"type": "text", "text": txt})
     return txt
 

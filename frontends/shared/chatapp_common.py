@@ -84,9 +84,10 @@ _RX_THINK_PLACEHOLDER = re.compile(
 _RX_STRAY_BRACE = re.compile(r"^\s*\}\}\s*$", re.MULTILINE)
 _RX_WORKING_MEM = re.compile(r"^### \[WORKING MEMORY\].*\n?", re.MULTILINE)
 _RX_TURN = re.compile(
-    r"\*{0,2}(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{3,}\*{0,2}"
-    r"|\[Turn \d+\].*?\.{3,}",
-    re.IGNORECASE)
+    r"^[\*=\-\s]*(?:LLM Running\s*)?\(?Turn\s*\d+\)?\s*\.{0,3}[\*=\-\s]*$"
+    r"|^\[Turn \d+\].*?\.{3,}\s*$",
+    re.IGNORECASE | re.MULTILINE)
+_RX_SYSTEM_TIPS = re.compile(r"^\[SYSTEM TIPS\].*$", re.MULTILINE)
 _RX_BLANK_COLLAPSE = re.compile(r"\n{3,}")
 
 
@@ -131,14 +132,12 @@ def _extract_final_answer(text: str) -> str:
     if not text:
         return ""
     # DeepSeek reasoning 模型输出 <summary>…</summary> 块：它可能是答案
-    # 本身（无外部文本）也可能是思考摘要（答案在外部）。统一处理：
-    # 移除 summary 块；外部仍有内容则用外部，否则回退 summary 内容。
-    m = SUMMARY_RE.search(text)
-    if m:
-        summary_content = m.group(1).strip()
-        text = text[: m.start()] + text[m.end():]
-        if not text.strip():
-            text = summary_content
+    # 本身（无外部文本）也可能是思考摘要（答案在外部）。多轮工具循环中
+    # 每轮都可能带一个 summary 块——全部移除，外部内容过滤后仍为空时，
+    # 回退最后一个（最新一轮）summary 内容。
+    summaries = [s.strip() for s in SUMMARY_RE.findall(text)]
+    if summaries:
+        text = SUMMARY_RE.sub("", text)
     # Verbose agent output contains every reasoning/tool turn in one string.
     # A fenced tool transcript from an earlier turn can span far enough for the
     # generic fence regex to consume the later user-facing answer.  The final
@@ -163,6 +162,7 @@ def _extract_final_answer(text: str) -> str:
     text = _RX_WORKING_MEM.sub("", text)
     text = _RX_TURN.sub("", text)
     text = _RX_THINK_PLACEHOLDER.sub("", text)
+    text = _RX_SYSTEM_TIPS.sub("", text)
     text = _RX_STRAY_BRACE.sub("", text)
     # Phase 4: four-or-more-backtick fences are internal transcripts.  Normal
     # Markdown fences use three backticks and are user-visible content.
@@ -178,6 +178,15 @@ def _extract_final_answer(text: str) -> str:
     text = re.sub(r"[ \t]+$", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s+$", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n{3,}", "\n\n", text)
+    if summaries:
+        # 外部内容过滤后只剩协议噪音（turn 残骸/状态标记）时，
+        # 回退最新 summary 作为答案，避免 TG 端显示 "..."。
+        probe = _RX_TURN.sub("", text)
+        probe = _RX_WORKING_MEM.sub("", probe)
+        probe = _RX_SYSTEM_TIPS.sub("", probe)
+        probe = _RX_THINK_PLACEHOLDER.sub("", probe)
+        if not probe.strip():
+            text = summaries[-1]
     return text.strip()
 
 
